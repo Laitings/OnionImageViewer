@@ -29,7 +29,16 @@ ImageViewport::ImageViewport(QWidget *parent)
 void ImageViewport::setImage(const QImage &image)
 {
     m_image = image;
-    fitToWindow();
+    if (m_image.isNull()) {
+        fitToWindow();
+        return;
+    }
+
+    if (m_image.width() <= width() && m_image.height() <= height()) {
+        zoomActualSize();
+    } else {
+        fitToWindow();
+    }
 }
 
 bool ImageViewport::hasImage() const

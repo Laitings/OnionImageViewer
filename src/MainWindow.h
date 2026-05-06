@@ -1,14 +1,21 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSet>
+#include <QStringList>
 #include <memory>
 
 class QAction;
 class FolderTreePanel;
 class ImageLoader;
 class ImageViewport;
+class QIcon;
 class QLabel;
+class QListWidget;
+class QListWidgetItem;
+class QPushButton;
 class QSplitter;
+class QStackedWidget;
 
 class MainWindow final : public QMainWindow
 {
@@ -20,6 +27,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void createActions();
@@ -30,16 +38,43 @@ private:
     void loadSettings();
     void saveSettings();
     void openImage();
+    void openImagePath(const QString &filePath);
     void setFolderPanelVisible(bool visible);
     void handleFolderSelected(const QString &folderPath);
+    void handleGridItemActivated(QListWidgetItem *item);
+    void populateFileGrid(const QString &folderPath, bool addToHistory = true);
+    void navigateBack();
+    void updateBackAction();
+    void showGrid();
+    void showCurrentImage();
+    void showNextImage();
+    void showPreviousImage();
+    void updateImageNavigation();
+    void setImageListFromFolder(const QString &folderPath);
+    void scheduleVisibleThumbnails();
+    void requestThumbnail(QListWidgetItem *item);
+    void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail);
+    bool isImageFile(const QString &filePath) const;
 
     std::unique_ptr<ImageLoader> m_imageLoader;
     FolderTreePanel *m_folderTreePanel = nullptr;
+    QListWidget *m_fileGrid = nullptr;
     ImageViewport *m_imageViewport = nullptr;
+    QStackedWidget *m_contentStack = nullptr;
     QSplitter *m_splitter = nullptr;
     QLabel *m_folderPathLabel = nullptr;
+    QPushButton *m_closeImageButton = nullptr;
+    QPushButton *m_previousImageButton = nullptr;
+    QPushButton *m_nextImageButton = nullptr;
     QAction *m_toggleFoldersAction = nullptr;
+    QAction *m_backAction = nullptr;
     QAction *m_openImageAction = nullptr;
     QAction *m_fitToWindowAction = nullptr;
     QAction *m_actualSizeAction = nullptr;
+    QString m_currentFolderPath;
+    QStringList m_folderHistory;
+    QStringList m_currentImagePaths;
+    QSet<QString> m_pendingThumbnailPaths;
+    int m_thumbnailGeneration = 0;
+    int m_currentImageIndex = -1;
 };

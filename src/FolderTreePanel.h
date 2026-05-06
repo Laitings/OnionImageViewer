@@ -3,6 +3,8 @@
 #include <QWidget>
 
 class QFileSystemModel;
+class QListWidget;
+class QListWidgetItem;
 class QModelIndex;
 class QTreeView;
 
@@ -17,8 +19,13 @@ signals:
     void folderSelected(const QString &folderPath);
 
 private:
+    void addQuickLocation(const QString &label, const QString &path);
+    void populateQuickLocations();
     void handleClicked(const QModelIndex &index);
+    void handleQuickLocationClicked(QListWidgetItem *item);
+    void selectFolder(const QString &folderPath);
 
     QFileSystemModel *m_model = nullptr;
+    QListWidget *m_quickLocations = nullptr;
     QTreeView *m_treeView = nullptr;
 };
