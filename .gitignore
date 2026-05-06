@@ -1,0 +1,45 @@
+# CMake build directories
+build/
+cmake-build-*/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+
+# Qt generated files
+*._autogen/
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Visual Studio / MSBuild
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+
+# User/editor files
+*.user
+*.suo
+*.swp
+.idea/
+.vscode/
+
+# Binaries
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.lib
