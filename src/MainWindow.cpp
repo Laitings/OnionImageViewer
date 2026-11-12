@@ -940,6 +940,8 @@ void MainWindow::loadSettings()
         m_view = ColorTransform::View::None;
     }
     m_input = ColorTransform::inputFromSettingsKey(settings.value(SettingsInput).toString());
+    // The background loader renders the frames, so it has to know the restored view too.
+    m_frameLoader->setRender(m_view, m_input);
     updateLutActions();
     updateViewTransformActions();
     updateInputActions();
