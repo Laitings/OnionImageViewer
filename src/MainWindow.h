@@ -53,7 +53,7 @@ private:
     void updateViewTransformActions();
     void chooseLutFile();
     void showAbout();
-    void updateColorButton();
+    void updateColorButton(ColorTransform::View view);
     void setInput(ColorTransform::Input input);
     void updateInputActions();
     void useLutFile(const QString &filePath);

@@ -514,13 +514,13 @@ void MainWindow::createToolbar()
     m_colorButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     m_colorButton->setToolTip(QStringLiteral("View transform / LUT"));
     toolbar->addWidget(m_colorButton);
-    updateColorButton();
+    updateColorButton(m_view);
 }
 
-void MainWindow::updateColorButton()
+void MainWindow::updateColorButton(ColorTransform::View view)
 {
     if (m_colorButton) {
-        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)));
+        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)));
     }
 }
 
@@ -808,7 +808,7 @@ void MainWindow::useLutFile(const QString &filePath)
 void MainWindow::updateLutActions()
 {
     m_customLutAction->setText(ColorTransform::displayName(ColorTransform::View::CustomLut));
-    updateColorButton();
+    updateColorButton(m_view);
 
     m_recentLutsMenu->clear();
     const QStringList recent = QSettings().value(SettingsRecentLuts).toStringList();
@@ -829,7 +829,7 @@ void MainWindow::updateViewTransformActions()
 
 void MainWindow::updateViewTransformActions(ColorTransform::View view)
 {
-    updateColorButton();
+    updateColorButton(view);
     for (QAction *action : m_viewTransformGroup->actions()) {
         action->setChecked(action->data().toInt() == static_cast<int>(view));
     }
