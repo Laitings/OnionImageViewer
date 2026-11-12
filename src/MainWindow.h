@@ -17,6 +17,7 @@ class QActionGroup;
 class FolderTreePanel;
 class ImageLoader;
 class ImageViewport;
+class QColor;
 class QIcon;
 class QLabel;
 class QListWidget;
@@ -106,6 +107,8 @@ private:
     void updateCompare();
     void updateImageInfo();
     void updatePixelReadout(const QPoint &pixel);
+    void showViewerContextMenu(const QPoint &pos);
+    void copyColorText(const QString &text, const QColor &color);
     void handlePathActivated(const QString &path);
     bool isViewerVisible() const;
 
@@ -127,6 +130,7 @@ private:
     PathBar *m_pathBar = nullptr;
     QLabel *m_infoLabel = nullptr;
     QLabel *m_pixelLabel = nullptr;
+    QLabel *m_swatchLabel = nullptr;
     QAction *m_playAction = nullptr;
     QAction *m_pinAction = nullptr;
     QActionGroup *m_compareGroup = nullptr;
