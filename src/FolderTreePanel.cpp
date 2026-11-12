@@ -195,6 +195,20 @@ void FolderTreePanel::handleQuickLocationClicked(QListWidgetItem *item)
     selectFolder(item->data(FolderPathRole).toString());
 }
 
+void FolderTreePanel::showFolder(const QString &folderPath)
+{
+    if (folderPath.isEmpty()) {
+        return;
+    }
+    const QModelIndex index = m_model->index(folderPath);
+    if (!index.isValid() || index == m_treeView->currentIndex()) {
+        return;
+    }
+    // setCurrentIndex doesn't emit clicked, so this doesn't reload the grid.
+    m_treeView->setCurrentIndex(index);
+    m_treeView->scrollTo(index); // also expands the parents
+}
+
 void FolderTreePanel::selectFolder(const QString &folderPath)
 {
     if (folderPath.isEmpty()) {
