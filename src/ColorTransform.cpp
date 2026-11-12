@@ -780,7 +780,7 @@ int findArriLuts(const QStringList &folders)
         int value = 0;
         if (!name.contains(QStringLiteral("classic"), Qt::CaseInsensitive)) value += 8;
         if (!name.contains(QStringLiteral("beta"), Qt::CaseInsensitive)) value += 4;
-        if (name.contains(QStringLiteral("-33"))) value += 2;
+        if (name.contains(QStringLiteral("-33")) || name.contains(QStringLiteral("_33"))) value += 2;
         return value;
     };
     const QString patterns[2] = {QStringLiteral("logc3-to-gamma24_rec709"), QStringLiteral("logc4-to-gamma24_rec709")};
