@@ -36,6 +36,7 @@
 #include <QStandardPaths>
 #include <QStyle>
 #include <QStatusBar>
+#include <QSaveFile>
 #include <QScrollBar>
 #include <QThread>
 #include <QThreadPool>
@@ -173,9 +174,10 @@ QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, bool *
         return QImage();
     }
 
+    // The shell only accepts native paths; Qt paths use forward slashes.
     Microsoft::WRL::ComPtr<IShellItemImageFactory> imageFactory;
     const HRESULT itemResult = SHCreateItemFromParsingName(
-        reinterpret_cast<LPCWSTR>(filePath.utf16()),
+        reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(filePath).utf16()),
         nullptr,
         IID_PPV_ARGS(&imageFactory));
 
@@ -204,6 +206,15 @@ QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, bool *
 }
 
 #endif
+
+// Write via a temporary file so an interrupted save never leaves a half-written PNG behind.
+void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
+{
+    QSaveFile file(cachePath);
+    if (file.open(QIODevice::WriteOnly) && thumbnail.save(&file, "PNG")) {
+        file.commit();
+    }
+}
 
 QImage readerThumbnailForImage(const QString &filePath)
 {
@@ -240,7 +251,7 @@ QImage loadThumbnailImage(const QString &filePath, bool *pending)
         }
         if (!thumbnail.isNull()) {
             thumbnail = thumbnail.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            thumbnail.save(cachePath, "PNG");
+            saveThumbnailToCache(thumbnail, cachePath);
         }
         return thumbnail;
     }
@@ -256,7 +267,7 @@ QImage loadThumbnailImage(const QString &filePath, bool *pending)
     }
 
     if (!thumbnail.isNull()) {
-        thumbnail.save(cachePath, "PNG");
+        saveThumbnailToCache(thumbnail, cachePath);
     }
 
     return thumbnail;
