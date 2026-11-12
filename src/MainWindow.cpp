@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileIconProvider>
@@ -65,6 +66,7 @@ const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
 const QString SettingsViewTransform = QStringLiteral("view/colorTransform");
 const QString SettingsInput = QStringLiteral("view/input");
 const QString SettingsLutFile = QStringLiteral("view/lutFile");
+const QString SettingsArriLutFolder = QStringLiteral("view/arriLutFolder");
 const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
@@ -444,6 +446,10 @@ void MainWindow::createActions()
         });
     }
 
+    m_arriLutFolderAction = new QAction(QStringLiteral("Set ARRI LUT Folder…"), this);
+    m_arriLutFolderAction->setToolTip(QStringLiteral("Folder with ARRI's LogC3/LogC4 to Rec.709 .cube files, used by the ARRI views"));
+    connect(m_arriLutFolderAction, &QAction::triggered, this, &MainWindow::chooseArriLutFolder);
+
     m_loadLutAction = new QAction(QStringLiteral("Load LUT File…"), this);
     m_loadLutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
     connect(m_loadLutAction, &QAction::triggered, this, &MainWindow::chooseLutFile);
@@ -470,6 +476,7 @@ void MainWindow::createMenus()
     colorMenu->addActions(m_viewTransformGroup->actions());
     colorMenu->addSeparator();
     colorMenu->addAction(m_loadLutAction);
+    colorMenu->addAction(m_arriLutFolderAction);
     m_recentLutsMenu = colorMenu->addMenu(QStringLiteral("Recent LUTs"));
     colorMenu->addSeparator();
     QMenu *inputMenu = colorMenu->addMenu(QStringLiteral("EXR Input"));
@@ -514,13 +521,13 @@ void MainWindow::createToolbar()
     m_colorButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
     m_colorButton->setToolTip(QStringLiteral("View transform / LUT"));
     toolbar->addWidget(m_colorButton);
-    updateColorButton();
+    updateColorButton(m_view);
 }
 
-void MainWindow::updateColorButton()
+void MainWindow::updateColorButton(ColorTransform::View view)
 {
     if (m_colorButton) {
-        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)));
+        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)));
     }
 }
 
@@ -642,6 +649,7 @@ void MainWindow::loadSettings()
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
 
+    findArriLuts();
     const QString lutFile = settings.value(SettingsLutFile).toString();
     if (!lutFile.isEmpty()) {
         QString error;
@@ -759,6 +767,40 @@ void MainWindow::updateInputActions()
     }
 }
 
+// ARRI's own LUTs for the LogC3/LogC4 views: a "luts" folder next to the program (filled at build
+// time, see ONION_ARRI_LUT_DIR in CMakeLists.txt) wins over the folder picked in the menu.
+void MainWindow::findArriLuts()
+{
+    const QStringList folders = {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/luts"),
+        QSettings().value(SettingsArriLutFolder).toString(),
+    };
+    ColorTransform::findArriLuts(folders);
+}
+
+void MainWindow::chooseArriLutFolder()
+{
+    const QString current = QSettings().value(SettingsArriLutFolder).toString();
+    const QString folder = QFileDialog::getExistingDirectory(this, QStringLiteral("ARRI LUT Folder"), current);
+    if (folder.isEmpty()) {
+        return;
+    }
+    QSettings().setValue(SettingsArriLutFolder, folder);
+    findArriLuts();
+    const QString logC3 = ColorTransform::arriLutFilePath(ColorTransform::View::LogC3ToRec709);
+    const QString logC4 = ColorTransform::arriLutFilePath(ColorTransform::View::LogC4ToRec709);
+    auto describe = [](const QString &path) {
+        return path.isEmpty() ? QStringLiteral("not found (using the approximation)") : QDir::toNativeSeparators(path);
+    };
+    QMessageBox::information(this, QStringLiteral("ARRI LUTs"),
+                             QStringLiteral("LogC3: %1\nLogC4: %2").arg(describe(logC3), describe(logC4)));
+    updateLutActions();
+    if (!m_currentSourceImage.isNull()) {
+        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
+    }
+    resetThumbnails();
+}
+
 void MainWindow::chooseLutFile()
 {
     QString directory = QFileInfo(ColorTransform::lutFilePath()).absolutePath();
@@ -807,8 +849,10 @@ void MainWindow::useLutFile(const QString &filePath)
 
 void MainWindow::updateLutActions()
 {
-    m_customLutAction->setText(ColorTransform::displayName(ColorTransform::View::CustomLut));
-    updateColorButton();
+    for (QAction *action : m_viewTransformGroup->actions()) {
+        action->setText(ColorTransform::displayName(static_cast<ColorTransform::View>(action->data().toInt())));
+    }
+    updateColorButton(m_view);
 
     m_recentLutsMenu->clear();
     const QStringList recent = QSettings().value(SettingsRecentLuts).toStringList();
@@ -829,7 +873,7 @@ void MainWindow::updateViewTransformActions()
 
 void MainWindow::updateViewTransformActions(ColorTransform::View view)
 {
-    updateColorButton();
+    updateColorButton(view);
     for (QAction *action : m_viewTransformGroup->actions()) {
         action->setChecked(action->data().toInt() == static_cast<int>(view));
     }
