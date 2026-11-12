@@ -31,6 +31,7 @@ class QDockWidget;
 class QKeyEvent;
 class QDragEnterEvent;
 class QDropEvent;
+class QSlider;
 class QSplitter;
 class QStackedWidget;
 
@@ -89,6 +90,8 @@ private:
     void revealOverlayButtons();
     void setImageListFromFolder(const QString &folderPath);
     void scheduleVisibleThumbnails();
+    void setThumbnailDisplaySize(int size);
+    QSize thumbnailResolution() const;
     void requestThumbnail(QListWidgetItem *item, int priority);
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending);
     bool isImageFile(const QString &filePath) const;
@@ -202,5 +205,7 @@ private:
     QHash<QString, int> m_thumbnailRetryCounts;
     bool m_backgroundThumbnailsQueued = false;
     int m_thumbnailGeneration = 0;
+    int m_thumbnailDisplaySize = 128;
+    QSlider *m_thumbnailSizeSlider = nullptr;
     int m_currentImageIndex = -1;
 };

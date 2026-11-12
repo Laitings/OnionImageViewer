@@ -53,6 +53,8 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QSize>
 #include <QStackedWidget>
 #include <QSplitter>
@@ -67,6 +69,7 @@
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 
@@ -90,6 +93,7 @@ const QString SettingsArriLutFolder = QStringLiteral("view/arriLutFolder");
 const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
 const QString SettingsRecentImages = QStringLiteral("file/recentImages");
 const QString SettingsExportFolder = QStringLiteral("export/folder");
+const QString SettingsThumbnailSize = QStringLiteral("grid/thumbnailSize");
 const QString SettingsExportFormat = QStringLiteral("export/format");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
@@ -98,7 +102,13 @@ const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
 const int IsImageRole = Qt::UserRole + 2;
 const int ThumbnailLoadedRole = Qt::UserRole + 3;
-const QSize ThumbnailSize(128, 128);
+// Thumbnails are made at one of two resolutions: 128 px (the classic size; its cache stays valid)
+// or 256 px when the grid shows them bigger than 128. The grid scales them to the chosen size.
+constexpr int SmallThumbnailResolution = 128;
+constexpr int LargeThumbnailResolution = 256;
+constexpr int MinThumbnailDisplaySize = 64;
+constexpr int MaxThumbnailDisplaySize = 256;
+constexpr int ThumbnailDisplayStep = 16;
 constexpr int ThumbnailScheduleDelayMs = 60;
 constexpr int MaxPendingThumbnails = 32;
 constexpr int ThumbnailPriorityVisible = 1;
@@ -177,7 +187,7 @@ QString thumbnailCacheDirectory()
     return cacheDirectory;
 }
 
-QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view, ColorTransform::Input input)
+QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
 {
     QString cacheKeySource = fileInfo.absoluteFilePath()
         + QStringLiteral("|")
@@ -189,6 +199,9 @@ QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view,
     }
     // "r3": how EXRs are interpreted changed (camera log tags), so older thumbnails are stale.
     cacheKeySource += QStringLiteral("|in=") + ColorTransform::inputSettingsKey(input) + QStringLiteral("|r3");
+    if (size.width() != SmallThumbnailResolution) {
+        cacheKeySource += QStringLiteral("|s=%1").arg(size.width());
+    }
 
     const QByteArray cacheKey = QCryptographicHash::hash(cacheKeySource.toUtf8(), QCryptographicHash::Sha256).toHex();
     return thumbnailCacheDirectory() + QStringLiteral("/") + QString::fromLatin1(cacheKey) + QStringLiteral(".png");
@@ -260,7 +273,7 @@ bool isCloudOnlyFile(const QString &filePath)
 
 // pending is set when Windows has queued a background fetch for the thumbnail (typical for
 // OneDrive online-only files the first time). Asking again a little later returns it.
-QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, bool *pending = nullptr)
+QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, const QSize &thumbSize, bool *pending = nullptr)
 {
     const HRESULT initializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool shouldUninitialize = SUCCEEDED(initializeResult);
@@ -278,7 +291,7 @@ QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, bool *
     QImage thumbnail;
     if (SUCCEEDED(itemResult) && imageFactory) {
         HBITMAP bitmap = nullptr;
-        SIZE size = {ThumbnailSize.width(), ThumbnailSize.height()};
+        SIZE size = {thumbSize.width(), thumbSize.height()};
         const HRESULT thumbnailResult = imageFactory->GetImage(
             size,
             SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK | SIIGBF_THUMBNAILONLY | extraFlags,
@@ -312,7 +325,7 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
 
 // Turns a full-precision image (DPX/EXR) into a display thumbnail: shrink it cheaply first so the
 // colour transform only touches a small image, then apply the view and scale smoothly.
-QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTransform::Input input)
+QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
 {
     if (source.isNull()) {
         return source;
@@ -321,22 +334,22 @@ QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTr
     input = ColorTransform::resolveInput(input, source);
     view = ColorTransform::resolveView(view, source);
     QImage reduced = source;
-    const QSize roughSize = ThumbnailSize * 2;
+    const QSize roughSize = size * 2;
     if (reduced.width() > roughSize.width() || reduced.height() > roughSize.height()) {
         reduced = reduced.scaled(roughSize, Qt::KeepAspectRatio, Qt::FastTransformation);
     }
     return ColorTransform::toDisplay(reduced, view, input)
-        .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        .scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input)
+QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
 {
     if (Exr::isExrFile(filePath)) {
-        return displayThumbnail(Exr::read(filePath, nullptr, true), view, input);
+        return displayThumbnail(Exr::read(filePath, nullptr, true), view, input, size);
     }
 
     if (Dpx::isDpxFile(filePath)) {
-        return displayThumbnail(Dpx::read(filePath, nullptr, ThumbnailSize), view, input);
+        return displayThumbnail(Dpx::read(filePath, nullptr, size), view, input, size);
     }
 
     QImageReader reader(filePath);
@@ -344,18 +357,18 @@ QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View vie
 
     const QSize imageSize = reader.size();
     if (imageSize.isValid()) {
-        reader.setScaledSize(imageSize.scaled(ThumbnailSize, Qt::KeepAspectRatio));
+        reader.setScaledSize(imageSize.scaled(size, Qt::KeepAspectRatio));
     }
 
     const QImage image = reader.read();
     return view == ColorTransform::View::None ? image : ColorTransform::toDisplay(image, view);
 }
 
-QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, bool *pending)
+QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, const QSize &size, bool *pending)
 {
     *pending = false;
     const QFileInfo fileInfo(filePath);
-    const QString cachePath = thumbnailCachePath(fileInfo, view, input);
+    const QString cachePath = thumbnailCachePath(fileInfo, view, input, size);
 
     QImage thumbnail;
     if (thumbnail.load(cachePath)) {
@@ -367,27 +380,27 @@ QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, Co
         // Never read the file itself here, or OneDrive downloads it. First try the Windows
         // thumbnail cache, then the sync provider's own thumbnail (OneDrive serves these from
         // the cloud, the same way Explorer shows them). If neither has one, keep the plain icon.
-        thumbnail = shellThumbnailForImage(filePath, SIIGBF_INCACHEONLY);
+        thumbnail = shellThumbnailForImage(filePath, SIIGBF_INCACHEONLY, size);
         if (thumbnail.isNull()) {
-            thumbnail = shellThumbnailForImage(filePath, SIIGBF(0), pending);
+            thumbnail = shellThumbnailForImage(filePath, SIIGBF(0), size, pending);
         }
         if (!thumbnail.isNull()) {
             thumbnail = ColorTransform::toDisplay(thumbnail, view)
-                            .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                            .scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             saveThumbnailToCache(thumbnail, cachePath);
         }
         return thumbnail;
     }
 
-    thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
+    thumbnail = shellThumbnailForImage(filePath, SIIGBF(0), size);
     if (!thumbnail.isNull()) {
         thumbnail = ColorTransform::toDisplay(thumbnail, view)
-                        .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                        .scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 #endif
 
     if (thumbnail.isNull()) {
-        thumbnail = readerThumbnailForImage(filePath, view, input);
+        thumbnail = readerThumbnailForImage(filePath, view, input, size);
     }
 
     if (!thumbnail.isNull()) {
@@ -449,6 +462,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
+    if (event->type() == QEvent::Wheel && m_fileGrid && watched == m_fileGrid->viewport()) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        if (wheel->modifiers().testFlag(Qt::ControlModifier)) {
+            const int delta = wheel->angleDelta().y();
+            if (delta != 0) {
+                setThumbnailDisplaySize(m_thumbnailDisplaySize + (delta > 0 ? ThumbnailDisplayStep : -ThumbnailDisplayStep));
+            }
+            return true;
+        }
+    }
     if (watched == m_imagePage && event->type() == QEvent::Resize) {
         layoutOverlayButtons();
     }
@@ -823,8 +846,8 @@ void MainWindow::createCentralLayout()
     m_fileGrid->setResizeMode(QListView::Adjust);
     m_fileGrid->setMovement(QListView::Static);
     m_fileGrid->setUniformItemSizes(true);
-    m_fileGrid->setIconSize(ThumbnailSize);
-    m_fileGrid->setGridSize(QSize(170, 168));
+    m_fileGrid->setIconSize(QSize(m_thumbnailDisplaySize, m_thumbnailDisplaySize));
+    m_fileGrid->setGridSize(QSize(qMax(m_thumbnailDisplaySize + 42, 112), m_thumbnailDisplaySize + 40));
     m_fileGrid->setSpacing(10);
     m_fileGrid->setSelectionMode(QAbstractItemView::SingleSelection);
     m_fileGrid->setWordWrap(true);
@@ -880,6 +903,21 @@ void MainWindow::createCentralLayout()
     m_swatchLabel->setToolTip(QStringLiteral("Color under the mouse. Right-click the image to copy it."));
     m_swatchLabel->hide();
     statusBar()->addPermanentWidget(m_swatchLabel);
+
+    // Thumbnail size (grid only; Ctrl+scroll wheel over the grid does the same).
+    m_thumbnailSizeSlider = new QSlider(Qt::Horizontal, this);
+    m_thumbnailSizeSlider->setRange(MinThumbnailDisplaySize, MaxThumbnailDisplaySize);
+    m_thumbnailSizeSlider->setSingleStep(ThumbnailDisplayStep);
+    m_thumbnailSizeSlider->setPageStep(ThumbnailDisplayStep * 2);
+    m_thumbnailSizeSlider->setFixedWidth(150);
+    m_thumbnailSizeSlider->setValue(m_thumbnailDisplaySize);
+    m_thumbnailSizeSlider->setToolTip(QStringLiteral("Thumbnail size (Ctrl + scroll wheel)"));
+    m_thumbnailSizeSlider->setFocusPolicy(Qt::NoFocus);
+    statusBar()->addPermanentWidget(m_thumbnailSizeSlider);
+    connect(m_thumbnailSizeSlider, &QSlider::valueChanged, this, &MainWindow::setThumbnailDisplaySize);
+    connect(m_contentStack, &QStackedWidget::currentChanged, this, [this]() {
+        m_thumbnailSizeSlider->setVisible(m_contentStack->currentWidget() == m_fileGrid);
+    });
     connect(m_imageViewport, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updatePixelReadout);
     m_imageViewport->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_imageViewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewerContextMenu);
@@ -940,6 +978,8 @@ void MainWindow::loadSettings()
     const bool foldersVisible = settings.value(SettingsFoldersVisible, false).toBool();
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
+
+    setThumbnailDisplaySize(settings.value(SettingsThumbnailSize, 128).toInt());
 
     findArriLuts();
     const QString lutFile = settings.value(SettingsLutFile).toString();
@@ -1957,6 +1997,44 @@ void MainWindow::updateViewTransformActions(ColorTransform::View view)
     }
 }
 
+QSize MainWindow::thumbnailResolution() const
+{
+    const int resolution = m_thumbnailDisplaySize <= SmallThumbnailResolution ? SmallThumbnailResolution : LargeThumbnailResolution;
+    return QSize(resolution, resolution);
+}
+
+void MainWindow::setThumbnailDisplaySize(int size)
+{
+    size = qBound(MinThumbnailDisplaySize, size, MaxThumbnailDisplaySize);
+    size = (size + ThumbnailDisplayStep / 2) / ThumbnailDisplayStep * ThumbnailDisplayStep;
+    const QSize oldResolution = thumbnailResolution();
+    const bool changed = size != m_thumbnailDisplaySize;
+    m_thumbnailDisplaySize = size;
+
+    if (m_thumbnailSizeSlider && m_thumbnailSizeSlider->value() != size) {
+        const QSignalBlocker blocker(m_thumbnailSizeSlider);
+        m_thumbnailSizeSlider->setValue(size);
+    }
+    if (!changed) {
+        return;
+    }
+    // Keep the item under view in place while the grid reflows.
+    QListWidgetItem *anchor = m_fileGrid->currentItem();
+    m_fileGrid->setIconSize(QSize(size, size));
+    m_fileGrid->setGridSize(QSize(qMax(size + 42, 112), size + 40));
+    if (anchor) {
+        m_fileGrid->scrollToItem(anchor);
+    }
+    QSettings().setValue(SettingsThumbnailSize, size);
+    statusBar()->showMessage(QStringLiteral("Thumbnails %1 px").arg(size), 1500);
+
+    if (thumbnailResolution() != oldResolution) {
+        resetThumbnails(); // bigger than 128 px: make sharper ones (cached separately)
+    } else {
+        m_thumbnailScheduleTimer.start(); // more (or fewer) fit on screen now
+    }
+}
+
 // Throws away the current thumbnails and makes them again (for example after a view change).
 void MainWindow::resetThumbnails()
 {
@@ -2263,11 +2341,12 @@ void MainWindow::requestThumbnail(QListWidgetItem *item, int priority)
     const int generation = m_thumbnailGeneration;
     const ColorTransform::View view = m_view;
     const ColorTransform::Input input = m_input;
+    const QSize size = thumbnailResolution();
     m_pendingThumbnailPaths.insert(filePath);
 
-    m_thumbnailPool.start([this, filePath, generation, view, input]() {
+    m_thumbnailPool.start([this, filePath, generation, view, input, size]() {
         bool pending = false;
-        const QImage thumbnail = loadThumbnailImage(filePath, view, input, &pending);
+        const QImage thumbnail = loadThumbnailImage(filePath, view, input, size, &pending);
         QMetaObject::invokeMethod(
             this,
             [this, filePath, generation, thumbnail, pending]() {
