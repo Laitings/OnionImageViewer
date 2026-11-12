@@ -37,6 +37,7 @@
 #include <QStyle>
 #include <QStatusBar>
 #include <QScrollBar>
+#include <QThread>
 #include <QThreadPool>
 #include <QTimer>
 #include <QToolBar>
@@ -60,6 +61,8 @@ const int IsFolderRole = Qt::UserRole + 1;
 const int IsImageRole = Qt::UserRole + 2;
 const int ThumbnailLoadedRole = Qt::UserRole + 3;
 const QSize ThumbnailSize(128, 128);
+constexpr int ThumbnailScheduleDelayMs = 60;
+constexpr int MaxPendingThumbnails = 64;
 
 QStringList supportedImageSuffixes()
 {
@@ -234,10 +237,21 @@ MainWindow::MainWindow(QWidget *parent)
     createCentralLayout();
     loadSettings();
     qApp->installEventFilter(this);
+
+    // Keep thumbnail work off most cores and at low priority so the UI stays responsive.
+    m_thumbnailPool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() / 4, 4));
+    m_thumbnailPool.setThreadPriority(QThread::LowPriority);
+
+    // Scrolling and resizing fire many events; only look for visible thumbnails once they settle.
+    m_thumbnailScheduleTimer.setSingleShot(true);
+    m_thumbnailScheduleTimer.setInterval(ThumbnailScheduleDelayMs);
+    connect(&m_thumbnailScheduleTimer, &QTimer::timeout, this, &MainWindow::scheduleVisibleThumbnails);
 }
 
 MainWindow::~MainWindow()
 {
+    m_thumbnailPool.clear();
+    m_thumbnailPool.waitForDone();
     qApp->removeEventFilter(this);
 }
 
@@ -387,7 +401,12 @@ void MainWindow::createCentralLayout()
 
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
-    connect(m_fileGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::scheduleVisibleThumbnails);
+    connect(m_fileGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
+        m_thumbnailScheduleTimer.start();
+    });
+    connect(m_fileGrid->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this]() {
+        m_thumbnailScheduleTimer.start();
+    });
     connect(m_closeImageButton, &QPushButton::clicked, this, &MainWindow::showGrid);
     connect(m_previousImageButton, &QPushButton::clicked, this, &MainWindow::showPreviousImage);
     connect(m_nextImageButton, &QPushButton::clicked, this, &MainWindow::showNextImage);
@@ -543,6 +562,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_currentImagePaths.clear();
     m_currentImageIndex = -1;
     m_pendingThumbnailPaths.clear();
+    m_thumbnailItems.clear();
+    m_thumbnailPool.clear();
     ++m_thumbnailGeneration;
     m_fileGrid->clear();
 
@@ -576,13 +597,14 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
 
         if (image) {
             m_currentImagePaths.append(filePath);
+            m_thumbnailItems.insert(filePath, item);
         }
     }
 
     showGrid();
     updateBackAction();
     QTimer::singleShot(0, this, &MainWindow::scheduleVisibleThumbnails);
-    QTimer::singleShot(250, this, &MainWindow::scheduleVisibleThumbnails);
+    m_thumbnailScheduleTimer.start(250);
 }
 
 void MainWindow::navigateBack()
@@ -693,8 +715,8 @@ void MainWindow::scheduleVisibleThumbnails()
         return;
     }
 
-    constexpr int InitialThumbnailBatchSize = 80;
-    for (int row = 0; row < m_fileGrid->count() && requestedCount < InitialThumbnailBatchSize; ++row) {
+    // Everything on screen is done or queued: prefetch a limited number of off-screen thumbnails.
+    for (int row = 0; row < m_fileGrid->count() && m_pendingThumbnailPaths.size() < MaxPendingThumbnails; ++row) {
         QListWidgetItem *item = m_fileGrid->item(row);
         if (!item || !item->data(IsImageRole).toBool() || item->data(ThumbnailLoadedRole).toBool()) {
             continue;
@@ -715,7 +737,7 @@ void MainWindow::requestThumbnail(QListWidgetItem *item)
     const int generation = m_thumbnailGeneration;
     m_pendingThumbnailPaths.insert(filePath);
 
-    QThreadPool::globalInstance()->start([this, filePath, generation]() {
+    m_thumbnailPool.start([this, filePath, generation]() {
         const QImage thumbnail = loadThumbnailImage(filePath);
         QMetaObject::invokeMethod(
             this,
@@ -728,18 +750,21 @@ void MainWindow::requestThumbnail(QListWidgetItem *item)
 
 void MainWindow::applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail)
 {
-    m_pendingThumbnailPaths.remove(filePath);
-    if (generation != m_thumbnailGeneration || thumbnail.isNull()) {
+    if (generation != m_thumbnailGeneration) {
         return;
     }
 
-    const QList<QListWidgetItem *> matches = m_fileGrid->findItems(QFileInfo(filePath).fileName(), Qt::MatchExactly);
-    for (QListWidgetItem *item : matches) {
-        if (item->data(FilePathRole).toString() == filePath) {
-            item->setIcon(QIcon(QPixmap::fromImage(thumbnail)));
-            item->setData(ThumbnailLoadedRole, true);
-            break;
-        }
+    m_pendingThumbnailPaths.remove(filePath);
+    QListWidgetItem *item = m_thumbnailItems.value(filePath, nullptr);
+    if (!item) {
+        return;
+    }
+
+    // Mark the item as done even when no thumbnail could be made, so it is not requested again
+    // on every scroll or resize.
+    item->setData(ThumbnailLoadedRole, true);
+    if (!thumbnail.isNull()) {
+        item->setIcon(QIcon(QPixmap::fromImage(thumbnail)));
     }
 }
 

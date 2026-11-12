@@ -2,7 +2,9 @@
 
 #include <QImage>
 #include <QPoint>
+#include <QPixmap>
 #include <QPointF>
+#include <QTimer>
 #include <QWidget>
 
 class ImageViewport final : public QWidget
@@ -32,6 +34,13 @@ private:
     void clampPan();
     void setZoomAroundPoint(double zoom, const QPointF &viewportPoint);
     void drawCheckerboard(QPainter &painter, const QRect &rect);
+    void invalidateScaledCache();
+    void rebuildScaledCache();
+
+    QPixmap m_checkerTile;
+    QPixmap m_scaledCache;
+    double m_scaledCacheZoom = 0.0;
+    QTimer m_smoothRescaleTimer;
 
     QImage m_image;
     double m_zoom = 1.0;

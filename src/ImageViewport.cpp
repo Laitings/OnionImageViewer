@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QMouseEvent>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QWheelEvent>
@@ -11,6 +12,7 @@ namespace {
 constexpr double MinZoom = 0.02;
 constexpr double MaxZoom = 64.0;
 constexpr int CheckerSize = 16;
+constexpr int SmoothRescaleDelayMs = 120;
 
 double clampedZoom(double zoom)
 {
@@ -24,11 +26,42 @@ ImageViewport::ImageViewport(QWidget *parent)
     setBackgroundRole(QPalette::Base);
     setMouseTracking(false);
     setCursor(Qt::ArrowCursor);
+    setAttribute(Qt::WA_OpaquePaintEvent);
+
+    // One 2x2-cell tile drawn with a texture brush instead of thousands of fillRect calls.
+    m_checkerTile = QPixmap(CheckerSize * 2, CheckerSize * 2);
+    {
+        QPainter tilePainter(&m_checkerTile);
+        const QColor light(96, 96, 96);
+        const QColor dark(72, 72, 72);
+        tilePainter.fillRect(0, 0, CheckerSize * 2, CheckerSize * 2, dark);
+        tilePainter.fillRect(0, 0, CheckerSize, CheckerSize, light);
+        tilePainter.fillRect(CheckerSize, CheckerSize, CheckerSize, CheckerSize, light);
+    }
+
+    // While the user is resizing or zooming, paint with a fast transform and only build the
+    // high quality downscaled copy once things have settled.
+    m_smoothRescaleTimer.setSingleShot(true);
+    m_smoothRescaleTimer.setInterval(SmoothRescaleDelayMs);
+    connect(&m_smoothRescaleTimer, &QTimer::timeout, this, [this]() {
+        rebuildScaledCache();
+        update();
+    });
 }
 
 void ImageViewport::setImage(const QImage &image)
 {
-    m_image = image;
+    // Convert once to a format QPainter can blit directly, so painting never has to
+    // convert pixel formats on the fly.
+    if (image.isNull()) {
+        m_image = QImage();
+    } else if (image.hasAlphaChannel()) {
+        m_image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    } else {
+        m_image = image.convertToFormat(QImage::Format_RGB32);
+    }
+    invalidateScaledCache();
+
     if (m_image.isNull()) {
         fitToWindow();
         return;
@@ -58,7 +91,11 @@ void ImageViewport::fitToWindow()
 
     const double widthScale = static_cast<double>(width()) / static_cast<double>(m_image.width());
     const double heightScale = static_cast<double>(height()) / static_cast<double>(m_image.height());
-    m_zoom = clampedZoom(qMin(widthScale, heightScale));
+    const double newZoom = clampedZoom(qMin(widthScale, heightScale));
+    if (!qFuzzyCompare(newZoom, m_zoom)) {
+        m_zoom = newZoom;
+        invalidateScaledCache();
+    }
     m_pan = QPointF();
     update();
 }
@@ -71,6 +108,7 @@ void ImageViewport::zoomActualSize()
 
     m_fitMode = false;
     m_zoom = 1.0;
+    invalidateScaledCache();
     m_pan = QPointF();
     clampPan();
     update();
@@ -78,10 +116,8 @@ void ImageViewport::zoomActualSize()
 
 void ImageViewport::paintEvent(QPaintEvent *event)
 {
-    Q_UNUSED(event)
-
     QPainter painter(this);
-    painter.fillRect(rect(), QColor(31, 31, 31));
+    painter.fillRect(event->rect(), QColor(31, 31, 31));
 
     if (m_image.isNull()) {
         painter.setPen(QColor(150, 150, 150));
@@ -90,15 +126,43 @@ void ImageViewport::paintEvent(QPaintEvent *event)
     }
 
     const QRectF target = imageRect();
-    drawCheckerboard(painter, target.toAlignedRect().intersected(rect()));
+    const QRectF visibleTarget = target.intersected(QRectF(event->rect()));
+    if (visibleTarget.isEmpty()) {
+        return;
+    }
 
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, m_zoom < 8.0);
-    painter.drawImage(target, m_image);
+    drawCheckerboard(painter, visibleTarget.toAlignedRect());
+
+    // Downscaled view with an up-to-date cache: draw the pre-scaled pixmap 1:1, which is cheap.
+    if (m_zoom < 1.0 && !m_scaledCache.isNull() && qFuzzyCompare(m_scaledCacheZoom, m_zoom)) {
+        const QPointF topLeft = target.topLeft();
+        const QRectF source = visibleTarget.translated(-topLeft);
+        painter.drawPixmap(visibleTarget, m_scaledCache, source);
+        return;
+    }
+
+    // Otherwise only transform the part of the source image that is actually visible.
+    const QRectF source(
+        (visibleTarget.left() - target.left()) / m_zoom,
+        (visibleTarget.top() - target.top()) / m_zoom,
+        visibleTarget.width() / m_zoom,
+        visibleTarget.height() / m_zoom);
+
+    const bool interactive = m_smoothRescaleTimer.isActive() || m_panning;
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, m_zoom < 8.0 && !interactive);
+    painter.drawImage(visibleTarget, m_image, source);
+
+    if (m_zoom < 1.0 && !m_smoothRescaleTimer.isActive()) {
+        m_smoothRescaleTimer.start();
+    }
 }
 
 void ImageViewport::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    if (!m_image.isNull()) {
+        m_smoothRescaleTimer.start();
+    }
     if (m_fitMode) {
         fitToWindow();
     } else {
@@ -158,6 +222,7 @@ void ImageViewport::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && m_panning) {
         m_panning = false;
         setCursor(Qt::ArrowCursor);
+        update();
         event->accept();
         return;
     }
@@ -212,6 +277,8 @@ void ImageViewport::setZoomAroundPoint(double zoom, const QPointF &viewportPoint
 
     m_fitMode = false;
     m_zoom = newZoom;
+    invalidateScaledCache();
+    m_smoothRescaleTimer.start();
     m_pan = viewportPoint - viewportCenter - imageSpacePoint * m_zoom;
     clampPan();
     update();
@@ -224,17 +291,28 @@ void ImageViewport::drawCheckerboard(QPainter &painter, const QRect &rect)
     }
 
     painter.save();
-    painter.setClipRect(rect);
+    painter.setBrushOrigin(0, 0);
+    painter.fillRect(rect, QBrush(m_checkerTile));
+    painter.restore();
+}
 
-    const QColor light(96, 96, 96);
-    const QColor dark(72, 72, 72);
+void ImageViewport::invalidateScaledCache()
+{
+    m_scaledCache = QPixmap();
+    m_scaledCacheZoom = 0.0;
+}
 
-    for (int y = rect.top() - (rect.top() % CheckerSize); y <= rect.bottom(); y += CheckerSize) {
-        for (int x = rect.left() - (rect.left() % CheckerSize); x <= rect.right(); x += CheckerSize) {
-            const bool alternate = ((x / CheckerSize) + (y / CheckerSize)) % 2 == 0;
-            painter.fillRect(QRect(x, y, CheckerSize, CheckerSize), alternate ? light : dark);
-        }
+void ImageViewport::rebuildScaledCache()
+{
+    if (m_image.isNull() || m_zoom >= 1.0) {
+        invalidateScaledCache();
+        return;
     }
 
-    painter.restore();
+    const QSize scaledSize(
+        qMax(1, qRound(static_cast<double>(m_image.width()) * m_zoom)),
+        qMax(1, qRound(static_cast<double>(m_image.height()) * m_zoom)));
+
+    m_scaledCache = QPixmap::fromImage(m_image.scaled(scaledSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    m_scaledCacheZoom = m_zoom;
 }
