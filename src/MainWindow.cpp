@@ -8,6 +8,7 @@
 #include "ImageViewport.h"
 #include "Metadata.h"
 #include "MetadataPanel.h"
+#include "OverlayButton.h"
 #include "PathBar.h"
 
 #include <QAction>
@@ -448,7 +449,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
-    Q_UNUSED(watched)
+    if (watched == m_imagePage && event->type() == QEvent::Resize) {
+        layoutOverlayButtons();
+    }
+    if (event->type() == QEvent::MouseMove && watched == m_imageViewport && !m_playTimer.isActive()) {
+        revealOverlayButtons();
+    }
 
     if (event->type() == QEvent::KeyPress && isActiveWindow() && isViewerVisible()
         && !qobject_cast<QLineEdit *>(QApplication::focusWidget())) {
@@ -827,28 +833,26 @@ void MainWindow::createCentralLayout()
     m_fileGrid->setTextElideMode(Qt::ElideRight);
 
     auto *imagePage = new QWidget(m_contentStack);
+    m_imagePage = imagePage;
     auto *imageLayout = new QGridLayout(imagePage);
     imageLayout->setContentsMargins(0, 0, 0, 0);
     imageLayout->setSpacing(0);
 
     m_imageViewport = new ImageViewport(imagePage);
-    m_closeImageButton = new QPushButton(QStringLiteral("X"), imagePage);
-    m_previousImageButton = new QPushButton(QStringLiteral("<"), imagePage);
-    m_nextImageButton = new QPushButton(QStringLiteral(">"), imagePage);
+    imageLayout->addWidget(m_imageViewport, 0, 0);
 
-    m_closeImageButton->setToolTip(QStringLiteral("Close image"));
-    m_previousImageButton->setToolTip(QStringLiteral("Previous image"));
-    m_nextImageButton->setToolTip(QStringLiteral("Next image"));
-
-    for (QPushButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
-        button->setFixedSize(36, 36);
-        button->setFocusPolicy(Qt::NoFocus);
+    // Close / previous / next float over the image (placed in layoutOverlayButtons) and only show
+    // while the mouse moves over the viewer.
+    m_closeImageButton = new OverlayButton(OverlayButton::Icon::Close, imagePage);
+    m_previousImageButton = new OverlayButton(OverlayButton::Icon::Previous, imagePage);
+    m_nextImageButton = new OverlayButton(OverlayButton::Icon::Next, imagePage);
+    m_closeImageButton->setToolTip(QStringLiteral("Back to the folder (Esc)"));
+    m_previousImageButton->setToolTip(QStringLiteral("Previous image (Left)"));
+    m_nextImageButton->setToolTip(QStringLiteral("Next image (Right)"));
+    for (OverlayButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
+        button->raise();
     }
-
-    imageLayout->addWidget(m_imageViewport, 0, 0, 3, 3);
-    imageLayout->addWidget(m_closeImageButton, 0, 2, Qt::AlignTop | Qt::AlignRight);
-    imageLayout->addWidget(m_previousImageButton, 1, 0, Qt::AlignLeft | Qt::AlignVCenter);
-    imageLayout->addWidget(m_nextImageButton, 1, 2, Qt::AlignRight | Qt::AlignVCenter);
+    imagePage->installEventFilter(this);
 
     m_contentStack->addWidget(m_fileGrid);
     m_contentStack->addWidget(imagePage);
@@ -889,12 +893,12 @@ void MainWindow::createCentralLayout()
     connect(m_fileGrid->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this]() {
         m_thumbnailScheduleTimer.start();
     });
-    connect(m_closeImageButton, &QPushButton::clicked, this, [this]() {
+    connect(m_closeImageButton, &OverlayButton::clicked, this, [this]() {
         stopPlayback();
         showGrid();
     });
-    connect(m_previousImageButton, &QPushButton::clicked, this, &MainWindow::showPreviousImage);
-    connect(m_nextImageButton, &QPushButton::clicked, this, &MainWindow::showNextImage);
+    connect(m_previousImageButton, &OverlayButton::clicked, this, &MainWindow::showPreviousImage);
+    connect(m_nextImageButton, &OverlayButton::clicked, this, &MainWindow::showNextImage);
 }
 
 void MainWindow::applyDarkPalette()
@@ -1125,6 +1129,9 @@ void MainWindow::togglePlayback()
     }
     m_stepDirection = 1;
     m_playTimer.start();
+    for (OverlayButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
+        button->conceal(); // keep the picture clear while playing
+    }
     prefetchAround();
     statusBar()->showMessage(QStringLiteral("Playing at up to %1 fps (Space to stop)").arg(PlaybackFps), 3000);
 }
@@ -2129,6 +2136,26 @@ void MainWindow::showPreviousImage()
 {
     stopPlayback();
     stepImage(-1);
+}
+
+void MainWindow::layoutOverlayButtons()
+{
+    if (!m_imagePage) {
+        return;
+    }
+    const int margin = 12;
+    const QRect area = m_imagePage->rect();
+    m_closeImageButton->move(area.right() - margin - m_closeImageButton->width() + 1, area.top() + margin);
+    m_previousImageButton->move(area.left() + margin, area.center().y() - m_previousImageButton->height() / 2);
+    m_nextImageButton->move(area.right() - margin - m_nextImageButton->width() + 1,
+                            area.center().y() - m_nextImageButton->height() / 2);
+}
+
+void MainWindow::revealOverlayButtons()
+{
+    for (OverlayButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
+        button->reveal();
+    }
 }
 
 void MainWindow::updateImageNavigation()
