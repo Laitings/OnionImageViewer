@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "DpxReader.h"
+#include "ExrReader.h"
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
@@ -80,6 +81,9 @@ QStringList supportedImageSuffixes()
         suffixes.append(QString::fromLatin1(format).toLower());
     }
     suffixes.append(QStringLiteral("dpx"));
+    if (Exr::isAvailable()) {
+        suffixes.append(QStringLiteral("exr"));
+    }
     suffixes.removeDuplicates();
     return suffixes;
 }
@@ -222,6 +226,11 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
 
 QImage readerThumbnailForImage(const QString &filePath)
 {
+    if (Exr::isExrFile(filePath)) {
+        const QImage image = Exr::read(filePath, nullptr, true);
+        return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
     if (Dpx::isDpxFile(filePath)) {
         const QImage image = Dpx::read(filePath, nullptr, ThumbnailSize);
         return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -530,7 +539,7 @@ void MainWindow::openImage()
         this,
         QStringLiteral("Open Image"),
         QString(),
-        QStringLiteral("Images (*.bmp *.dpx *.gif *.jpg *.jpeg *.png *.pbm *.pgm *.ppm *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
+        QStringLiteral("Images (*.bmp *.dpx *.exr *.gif *.jpg *.jpeg *.png *.pbm *.pgm *.ppm *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
 
     if (filePath.isEmpty()) {
         return;

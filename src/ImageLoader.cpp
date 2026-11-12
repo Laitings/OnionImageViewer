@@ -1,6 +1,7 @@
 #include "ImageLoader.h"
 
 #include "DpxReader.h"
+#include "ExrReader.h"
 
 #include <QImageReader>
 
@@ -14,6 +15,12 @@ ImageLoader::Result QtImageLoader::load(const QString &filePath) const
     if (Dpx::isDpxFile(filePath)) {
         QString error;
         QImage image = Dpx::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
+    if (Exr::isExrFile(filePath)) {
+        QString error;
+        QImage image = Exr::read(filePath, &error);
         return {image, image.isNull() ? error : QString()};
     }
 
