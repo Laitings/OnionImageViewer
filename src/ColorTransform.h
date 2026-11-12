@@ -20,8 +20,9 @@ enum class View {
 // way a VFX house's "ACES to LogC4" DCTL does, or to linear Rec.709 for the None view.
 // Integer images (DPX, TIFF, ...) are always taken as stored.
 enum class Input {
-    Auto,     // from the file's tags (EXR chromaticities / ACES flag), otherwise as stored
-    AsStored, // camera log or plain linear/sRGB values
+    Auto,      // from the file's tags (ACES chromaticities/flag, camera log tags), otherwise Linear
+    CameraLog, // camera log code values: shown as they are with the None view
+    Linear,    // scene linear: the None view adds the sRGB curve
     Aces2065, // ACES2065-1: AP0 primaries, scene linear
     AcesCg,   // ACEScg: AP1 primaries, scene linear
 };
@@ -48,9 +49,10 @@ Input inputFromSettingsKey(const QString &key);
 // Image text key readers use to tag what they know about an image's values.
 inline QString colorSpaceTextKey() { return QStringLiteral("ColorSpace"); }
 
-// Turns Auto into the input the image is tagged with (AsStored when untagged).
+// Turns Auto into the input the image is tagged with (Linear when an untagged float image,
+// CameraLog for integer images such as DPX).
 Input resolveInput(Input input, const QImage &source);
 
-QImage toDisplay(const QImage &source, View view, Input input = Input::AsStored);
+QImage toDisplay(const QImage &source, View view, Input input = Input::Auto);
 
 } // namespace ColorTransform

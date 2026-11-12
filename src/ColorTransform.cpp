@@ -657,8 +657,10 @@ QString inputDisplayName(Input input)
     switch (input) {
     case Input::Auto:
         return QStringLiteral("Auto (from file tags)");
-    case Input::AsStored:
-        return QStringLiteral("Camera log / as stored");
+    case Input::CameraLog:
+        return QStringLiteral("Camera log (show code values)");
+    case Input::Linear:
+        return QStringLiteral("Scene linear (sRGB curve)");
     case Input::Aces2065:
         return QStringLiteral("ACES2065-1 linear (AP0)");
     case Input::AcesCg:
@@ -672,8 +674,10 @@ QString inputSettingsKey(Input input)
     switch (input) {
     case Input::Auto:
         return QStringLiteral("auto");
-    case Input::AsStored:
-        return QStringLiteral("stored");
+    case Input::CameraLog:
+        return QStringLiteral("log");
+    case Input::Linear:
+        return QStringLiteral("linear");
     case Input::Aces2065:
         return QStringLiteral("aces2065");
     case Input::AcesCg:
@@ -684,7 +688,7 @@ QString inputSettingsKey(Input input)
 
 Input inputFromSettingsKey(const QString &key)
 {
-    for (Input input : {Input::AsStored, Input::Aces2065, Input::AcesCg}) {
+    for (Input input : {Input::CameraLog, Input::Linear, Input::Aces2065, Input::AcesCg}) {
         if (key == inputSettingsKey(input)) {
             return input;
         }
@@ -704,7 +708,10 @@ Input resolveInput(Input input, const QImage &source)
     if (tag == inputSettingsKey(Input::AcesCg)) {
         return Input::AcesCg;
     }
-    return Input::AsStored;
+    if (tag == inputSettingsKey(Input::CameraLog) || !isFloatFormat(source.format())) {
+        return Input::CameraLog;
+    }
+    return Input::Linear;
 }
 
 bool loadLut(const QString &filePath, QString *error)
@@ -744,8 +751,11 @@ QImage toDisplay(const QImage &source, View view, Input inputSpace)
         }
     }
 
-    // Nothing to do for ordinary 8-bit or integer images shown as stored.
-    if (view == View::None && !floatSource) {
+    const Input resolved = resolveInput(inputSpace, source);
+
+    // Nothing to do for ordinary 8-bit or integer images shown as stored, or for camera log
+    // EXRs (their values are already display-ready code values, like a log DPX).
+    if (view == View::None && (!floatSource || resolved == Input::CameraLog)) {
         return source.hasAlphaChannel() ? source.convertToFormat(QImage::Format_ARGB32)
                                         : source.convertToFormat(QImage::Format_RGB32);
     }
@@ -753,7 +763,6 @@ QImage toDisplay(const QImage &source, View view, Input inputSpace)
     // Work from 16-bit values: half floats keep their bit patterns, integers are widened to 16 bit.
     QImage input = floatSource ? source.convertToFormat(QImage::Format_RGBX16FPx4)
                                : source.convertToFormat(QImage::Format_RGBX64);
-    const Input resolved = resolveInput(inputSpace, source);
     if (floatSource && (resolved == Input::Aces2065 || resolved == Input::AcesCg)) {
         input = convertAces(input, view, resolved);
     }
