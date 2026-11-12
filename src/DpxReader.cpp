@@ -350,7 +350,9 @@ QImage decode(const uchar *data, qint64 size, QString *error, const QSize &targe
         }
     }
 
-    return applyOrientation(image, orientation);
+    QImage result = applyOrientation(image, orientation);
+    result.setText(QStringLiteral("SourceFormat"), QStringLiteral("DPX %1-bit").arg(bitSize));
+    return result;
 }
 
 } // namespace

@@ -92,6 +92,24 @@ QString colorSpaceTag(const Imf::Header &header)
     return QString();
 }
 
+// The camera's log curve as ARRI writes it ("Log C4", "Log C"/"LogC3"), whether or not the pixels
+// still hold it (an ACES comp keeps the plate's tags; colorSpaceTag() decides that).
+QString cameraCurve(const Imf::Header &header)
+{
+    const auto *gamma = header.findTypedAttribute<Imf::StringAttribute>("tech_details_gamma_space");
+    if (!gamma) {
+        return QString();
+    }
+    const QString value = QString::fromStdString(gamma->value()).remove(QLatin1Char(' ')).toLower();
+    if (value.contains(QStringLiteral("logc4"))) {
+        return QStringLiteral("logc4");
+    }
+    if (value.contains(QStringLiteral("logc"))) {
+        return QStringLiteral("logc3");
+    }
+    return QString();
+}
+
 QImage previewImage(const Imf::Header &header)
 {
     const Imf::PreviewImage &preview = header.previewImage();
@@ -191,6 +209,11 @@ QImage read(const QString &filePath, QString *error, bool preferPreview)
         if (!tag.isEmpty()) {
             image.setText(ColorTransform::colorSpaceTextKey(), tag);
         }
+        const QString curve = cameraCurve(header);
+        if (!curve.isEmpty()) {
+            image.setText(ColorTransform::cameraCurveTextKey(), curve);
+        }
+        image.setText(ColorTransform::sourceFormatTextKey(), QStringLiteral("EXR half float"));
         const int firstY = qMax(frame.min.y, dataWindow.min.y);
         const int lastY = qMin(frame.max.y, dataWindow.max.y);
         const int firstX = qMax(frame.min.x, dataWindow.min.x);

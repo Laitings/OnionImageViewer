@@ -52,6 +52,10 @@ qt_add_executable(OnionImageViewer
     src/ExrReader.cpp
     src/ColorTransform.h
     src/ColorTransform.cpp
+    src/FrameLoader.h
+    src/FrameLoader.cpp
+    src/PathBar.h
+    src/PathBar.cpp
 )
 
 target_link_libraries(OnionImageViewer

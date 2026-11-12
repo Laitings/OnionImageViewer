@@ -6,11 +6,19 @@
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
+#include "PathBar.h"
 
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
+#include <QDesktopServices>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QProcess>
+#include <QUrl>
 #include <QColor>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -22,6 +30,11 @@
 #include <QIcon>
 #include <QImageReader>
 #include <QKeySequence>
+#include <QKeyEvent>
+#include <QFloat16>
+#include <QLineEdit>
+#include <QRegularExpression>
+#include <QShortcut>
 #include <QLabel>
 #include <QListView>
 #include <QListWidget>
@@ -81,6 +94,53 @@ constexpr int ThumbnailPriorityVisible = 1;
 constexpr int ThumbnailPriorityBackground = 0;
 constexpr int ThumbnailRetryDelayMs = 2000;
 constexpr int MaxThumbnailRetries = 30; // about a minute of retries
+constexpr int PlaybackFps = 24;
+constexpr int PrefetchAhead = 6;
+
+// The frame number in a sequence file name ("DF_0078_0020_v001.1001.exr" -> "1001").
+QString frameNumberOf(const QString &filePath)
+{
+    static const QRegularExpression pattern(QStringLiteral("(\\d+)\\.[^.]+$"));
+    const QRegularExpressionMatch match = pattern.match(QFileInfo(filePath).fileName());
+    return match.hasMatch() ? match.captured(1) : QString();
+}
+
+// A stored value as text: floats with 4 decimals, integers as code values at the file's bit depth.
+QString storedPixelText(const QImage &source, const QPoint &pixel)
+{
+    if (source.isNull() || !source.rect().contains(pixel)) {
+        return QString();
+    }
+    switch (source.format()) {
+    case QImage::Format_RGBX16FPx4:
+    case QImage::Format_RGBA16FPx4:
+    case QImage::Format_RGBA16FPx4_Premultiplied: {
+        const auto *p = reinterpret_cast<const qfloat16 *>(source.constScanLine(pixel.y())) + pixel.x() * 4;
+        return QStringLiteral("%1  %2  %3").arg(float(p[0]), 0, 'f', 4).arg(float(p[1]), 0, 'f', 4).arg(float(p[2]), 0, 'f', 4);
+    }
+    case QImage::Format_RGBX32FPx4:
+    case QImage::Format_RGBA32FPx4:
+    case QImage::Format_RGBA32FPx4_Premultiplied: {
+        const auto *p = reinterpret_cast<const float *>(source.constScanLine(pixel.y())) + pixel.x() * 4;
+        return QStringLiteral("%1  %2  %3").arg(p[0], 0, 'f', 4).arg(p[1], 0, 'f', 4).arg(p[2], 0, 'f', 4);
+    }
+    case QImage::Format_RGBX64:
+    case QImage::Format_RGBA64:
+    case QImage::Format_RGBA64_Premultiplied: {
+        const auto *p = reinterpret_cast<const quint16 *>(source.constScanLine(pixel.y())) + pixel.x() * 4;
+        // Show DPX code values at their own bit depth (e.g. 0..1023 for 10-bit).
+        static const QRegularExpression bits(QStringLiteral("(\\d+)-bit"));
+        const QRegularExpressionMatch match = bits.match(source.text(ColorTransform::sourceFormatTextKey()));
+        const int depth = match.hasMatch() ? qBound(1, match.captured(1).toInt(), 16) : 16;
+        const int shift = 16 - depth;
+        return QStringLiteral("%1  %2  %3  (%4-bit)").arg(p[0] >> shift).arg(p[1] >> shift).arg(p[2] >> shift).arg(depth);
+    }
+    default: {
+        const QRgb rgb = source.pixel(pixel);
+        return QStringLiteral("%1  %2  %3").arg(qRed(rgb)).arg(qGreen(rgb)).arg(qBlue(rgb));
+    }
+    }
+}
 
 QStringList supportedImageSuffixes()
 {
@@ -248,6 +308,7 @@ QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTr
     }
     // Resolve Auto from the full image: scaling doesn't keep the file's tags.
     input = ColorTransform::resolveInput(input, source);
+    view = ColorTransform::resolveView(view, source);
     QImage reduced = source;
     const QSize roughSize = ThumbnailSize * 2;
     if (reduced.width() > roughSize.width() || reduced.height() > roughSize.height()) {
@@ -328,18 +389,23 @@ QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, Co
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , m_imageLoader(std::make_unique<QtImageLoader>())
+    , m_imageLoader(std::make_shared<QtImageLoader>())
 {
     setWindowTitle(QStringLiteral("Onion Image Viewer"));
     resize(1280, 800);
 
     applyDarkPalette();
+    m_frameLoader = new FrameLoader(m_imageLoader, this);
+    connect(m_frameLoader, &FrameLoader::frameReady, this, &MainWindow::showFrame);
+    m_playTimer.setInterval(1000 / PlaybackFps);
+    connect(&m_playTimer, &QTimer::timeout, this, &MainWindow::playbackTick);
     createActions();
     createMenus();
     createToolbar();
     createCentralLayout();
     loadSettings();
     qApp->installEventFilter(this);
+    setAcceptDrops(true);
 
     // Keep thumbnail work off most cores and at low priority so the UI stays responsive.
     m_thumbnailPool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() / 4, 4));
@@ -371,6 +437,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     Q_UNUSED(watched)
+
+    if (event->type() == QEvent::KeyPress && isActiveWindow() && isViewerVisible()
+        && !qobject_cast<QLineEdit *>(QApplication::focusWidget())) {
+        if (handleViewerKey(static_cast<QKeyEvent *>(event))) {
+            return true;
+        }
+    }
 
     if (event->type() == QEvent::MouseButtonPress && isActiveWindow()) {
         auto *mouseEvent = static_cast<QMouseEvent *>(event);
@@ -419,6 +492,7 @@ void MainWindow::createActions()
         {ColorTransform::View::LogC3ToRec709, QKeySequence(Qt::CTRL | Qt::Key_3)},
         {ColorTransform::View::LogC4ToRec709, QKeySequence(Qt::CTRL | Qt::Key_4)},
         {ColorTransform::View::CustomLut, QKeySequence(Qt::CTRL | Qt::Key_L)},
+        {ColorTransform::View::Auto, QKeySequence(Qt::CTRL | Qt::Key_1)},
     };
     for (const auto &entry : transforms) {
         auto *action = new QAction(ColorTransform::displayName(entry.view), m_viewTransformGroup);
@@ -450,6 +524,94 @@ void MainWindow::createActions()
     m_arriLutFolderAction->setToolTip(QStringLiteral("Folder with ARRI's LogC3/LogC4 to Rec.709 .cube files, used by the ARRI views"));
     connect(m_arriLutFolderAction, &QAction::triggered, this, &MainWindow::chooseArriLutFolder);
 
+    m_playAction = new QAction(QStringLiteral("Play / Pause"), this);
+    m_playAction->setShortcut(QKeySequence(Qt::Key_Space));
+    m_playAction->setShortcutContext(Qt::WidgetShortcut); // handled by the viewer's key filter
+    m_playAction->setToolTip(QStringLiteral("Play through the images of the folder (Space)"));
+    connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
+
+    m_compareGroup = new QActionGroup(this);
+    m_compareGroup->setExclusive(true);
+    const struct {
+        CompareMode mode;
+        const char *text;
+    } compareModes[] = {
+        {CompareOff, "No Compare"},
+        {CompareNoView, "Compare with Original (W)"},
+        {ComparePinned, "Compare with Pinned Image"},
+    };
+    for (const auto &entry : compareModes) {
+        auto *action = new QAction(QString::fromLatin1(entry.text), m_compareGroup);
+        action->setCheckable(true);
+        action->setData(int(entry.mode));
+        action->setChecked(entry.mode == CompareOff);
+        connect(action, &QAction::triggered, this, [this, mode = entry.mode]() {
+            setCompareMode(mode);
+        });
+    }
+    m_pinAction = new QAction(QStringLiteral("Pin Current Image for Compare (P)"), this);
+    connect(m_pinAction, &QAction::triggered, this, &MainWindow::pinCurrentImage);
+
+    // Channels: R/G/B/A/L show one channel (or the luminance) as grey; the same key again
+    // goes back to RGB.
+    m_channelGroup = new QActionGroup(this);
+    m_channelGroup->setExclusive(true);
+    const struct {
+        ImageViewport::Channel channel;
+        const char *text;
+    } channels[] = {
+        {ImageViewport::Channel::Rgb, "RGB"},
+        {ImageViewport::Channel::Red, "Red (R)"},
+        {ImageViewport::Channel::Green, "Green (G)"},
+        {ImageViewport::Channel::Blue, "Blue (B)"},
+        {ImageViewport::Channel::Alpha, "Alpha (A)"},
+        {ImageViewport::Channel::Luma, "Luminance (L)"},
+    };
+    for (const auto &entry : channels) {
+        auto *action = new QAction(QString::fromLatin1(entry.text), m_channelGroup);
+        action->setCheckable(true);
+        action->setData(int(entry.channel));
+        action->setChecked(entry.channel == ImageViewport::Channel::Rgb);
+        connect(action, &QAction::triggered, this, [this, channel = int(entry.channel)]() {
+            setChannel(channel, false);
+        });
+    }
+
+    m_clippingAction = new QAction(QStringLiteral("Show Clipping (C)"), this);
+    m_clippingAction->setCheckable(true);
+    m_clippingAction->setToolTip(QStringLiteral("Red where the picture is clipped to white, blue where it is crushed to black"));
+    connect(m_clippingAction, &QAction::toggled, this, [this](bool on) {
+        m_imageViewport->setClippingShown(on);
+    });
+
+    m_fullScreenAction = new QAction(QStringLiteral("Full Screen"), this);
+    m_fullScreenAction->setCheckable(true);
+    m_fullScreenAction->setShortcut(QKeySequence(Qt::Key_F11));
+    m_fullScreenAction->setShortcutContext(Qt::ApplicationShortcut);
+    connect(m_fullScreenAction, &QAction::toggled, this, &MainWindow::setFullScreenMode);
+    addAction(m_fullScreenAction); // keeps F11 working while the menu bar is hidden
+
+    m_copyImageAction = new QAction(QStringLiteral("Copy Image"), this);
+    m_copyImageAction->setShortcut(QKeySequence::Copy);
+    m_copyImageAction->setToolTip(QStringLiteral("Copy the picture as shown (with the color view) to the clipboard"));
+    connect(m_copyImageAction, &QAction::triggered, this, &MainWindow::copyImageToClipboard);
+
+    m_copyPathAction = new QAction(QStringLiteral("Copy Path"), this);
+    m_copyPathAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    connect(m_copyPathAction, &QAction::triggered, this, [this]() {
+        copyPathToClipboard(currentPath());
+    });
+
+#ifdef Q_OS_WIN
+    m_showInExplorerAction = new QAction(QStringLiteral("Show in Explorer"), this);
+#else
+    m_showInExplorerAction = new QAction(QStringLiteral("Show in File Manager"), this);
+#endif
+    m_showInExplorerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    connect(m_showInExplorerAction, &QAction::triggered, this, [this]() {
+        showInExplorer(currentPath());
+    });
+
     m_loadLutAction = new QAction(QStringLiteral("Load LUT File…"), this);
     m_loadLutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
     connect(m_loadLutAction, &QAction::triggered, this, &MainWindow::chooseLutFile);
@@ -460,6 +622,10 @@ void MainWindow::createMenus()
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
     fileMenu->addAction(m_openImageAction);
     fileMenu->addSeparator();
+    fileMenu->addAction(m_copyImageAction);
+    fileMenu->addAction(m_copyPathAction);
+    fileMenu->addAction(m_showInExplorerAction);
+    fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("Exit"), this, &QWidget::close);
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("View"));
@@ -469,6 +635,44 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_fitToWindowAction);
     viewMenu->addAction(m_actualSizeAction);
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_playAction);
+    viewMenu->addSeparator();
+    viewMenu->addActions(m_compareGroup->actions());
+    viewMenu->addAction(m_pinAction);
+    viewMenu->addSeparator();
+    QMenu *channelMenu = viewMenu->addMenu(QStringLiteral("Channels"));
+    channelMenu->addActions(m_channelGroup->actions());
+    viewMenu->addAction(m_clippingAction);
+    viewMenu->addAction(m_fullScreenAction);
+    viewMenu->addSeparator();
+    viewMenu->addAction(QStringLiteral("Edit Path (Alt+D)"), this, [this]() {
+        m_pathBar->startEditing();
+    });
+    viewMenu->addAction(QStringLiteral("Keyboard Shortcuts"), this, [this]() {
+        QMessageBox::information(this, QStringLiteral("Keyboard Shortcuts"), QStringLiteral(
+            "Viewer:\n"
+            "  Left / Right  previous / next image (hold to scrub)\n"
+            "  Shift+Left / Right  10 images back / forward\n"
+            "  Home / End  first / last image\n"
+            "  Space  play / pause\n"
+            "  W  compare wipe on / off\n"
+            "  P  pin this image as the compare image\n"
+            "  F  fit to window,  1  100% zoom\n"
+            "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
+            "  C  show clipping\n"
+            "  Ctrl+C  copy the picture\n"
+            "  Esc  leave full screen, then back to the grid\n\n"
+            "Color:\n"
+            "  Ctrl+1  Auto (from file tags)\n"
+            "  Ctrl+0 / 3 / 4  None / LogC3 / LogC4\n"
+            "  Ctrl+L  LUT file,  Ctrl+Shift+L  load a LUT\n\n"
+            "Anywhere:\n"
+            "  Alt+D or F4  type or paste a path\n"
+            "  F11  full screen\n"
+            "  Ctrl+Shift+C  copy the path,  Ctrl+E  show in Explorer\n"
+            "  Ctrl+O  open an image (or drop files and folders on the window)"));
+    });
 
     // Color has its own top-level menu (also opened from the toolbar's Color button).
     QMenu *colorMenu = menuBar()->addMenu(QStringLiteral("Color"));
@@ -526,9 +730,14 @@ void MainWindow::createToolbar()
 
 void MainWindow::updateColorButton(ColorTransform::View view)
 {
-    if (m_colorButton) {
-        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)));
+    if (!m_colorButton) {
+        return;
     }
+    QString text = ColorTransform::displayName(view);
+    if (view == ColorTransform::View::Auto && isViewerVisible() && !m_currentSourceImage.isNull()) {
+        text = QStringLiteral("Auto: %1").arg(ColorTransform::displayName(ColorTransform::resolveView(view, m_currentSourceImage)));
+    }
+    m_colorButton->setText(QStringLiteral("Color: %1").arg(text));
 }
 
 void MainWindow::createCentralLayout()
@@ -543,6 +752,14 @@ void MainWindow::createCentralLayout()
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(0);
 
+    m_pathBar = new PathBar(rightPanel);
+    rightLayout->addWidget(m_pathBar);
+    connect(m_pathBar, &PathBar::pathActivated, this, &MainWindow::handlePathActivated);
+    for (const QKeySequence &keys : {QKeySequence(Qt::ALT | Qt::Key_D), QKeySequence(Qt::Key_F4)}) {
+        auto *shortcut = new QShortcut(keys, this);
+        connect(shortcut, &QShortcut::activated, m_pathBar, &PathBar::startEditing);
+    }
+
     m_contentStack = new QStackedWidget(rightPanel);
 
     m_fileGrid = new QListWidget(m_contentStack);
@@ -555,6 +772,8 @@ void MainWindow::createCentralLayout()
     m_fileGrid->setSpacing(10);
     m_fileGrid->setSelectionMode(QAbstractItemView::SingleSelection);
     m_fileGrid->setWordWrap(true);
+    m_fileGrid->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_fileGrid, &QWidget::customContextMenuRequested, this, &MainWindow::showGridContextMenu);
     m_fileGrid->setTextElideMode(Qt::ElideRight);
 
     auto *imagePage = new QWidget(m_contentStack);
@@ -595,8 +814,13 @@ void MainWindow::createCentralLayout()
 
     setCentralWidget(m_splitter);
 
-    m_folderPathLabel = new QLabel(QStringLiteral("No folder selected"), this);
-    statusBar()->addPermanentWidget(m_folderPathLabel, 1);
+    // Status bar: image info on the left, the pixel under the mouse on the right.
+    m_infoLabel = new QLabel(this);
+    m_pixelLabel = new QLabel(this);
+    m_pixelLabel->setStyleSheet(QStringLiteral("font-family: Consolas, 'DejaVu Sans Mono', monospace;"));
+    statusBar()->addPermanentWidget(m_infoLabel, 1);
+    statusBar()->addPermanentWidget(m_pixelLabel);
+    connect(m_imageViewport, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updatePixelReadout);
 
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
@@ -606,7 +830,10 @@ void MainWindow::createCentralLayout()
     connect(m_fileGrid->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this]() {
         m_thumbnailScheduleTimer.start();
     });
-    connect(m_closeImageButton, &QPushButton::clicked, this, &MainWindow::showGrid);
+    connect(m_closeImageButton, &QPushButton::clicked, this, [this]() {
+        stopPlayback();
+        showGrid();
+    });
     connect(m_previousImageButton, &QPushButton::clicked, this, &MainWindow::showPreviousImage);
     connect(m_nextImageButton, &QPushButton::clicked, this, &MainWindow::showNextImage);
 }
@@ -696,34 +923,526 @@ void MainWindow::openImagePath(const QString &filePath)
     if (!m_currentImagePaths.contains(filePath)) {
         setImageListFromFolder(QFileInfo(filePath).absolutePath());
     }
-
-    const ImageLoader::Result result = m_imageLoader->load(filePath);
-    if (!result.isValid()) {
-        QMessageBox::warning(
-            this,
-            QStringLiteral("Could Not Open Image"),
-            QStringLiteral("The image could not be opened:\n%1").arg(result.error));
-        return;
+    int index = m_currentImagePaths.indexOf(filePath);
+    if (index < 0) {
+        m_currentImagePaths.append(filePath);
+        index = m_currentImagePaths.size() - 1;
     }
 
-    m_currentSourceImage = result.image;
-    m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input));
-    if (m_currentImagePaths.isEmpty()) {
-        m_currentImagePaths.append(filePath);
-        m_currentImageIndex = 0;
+    stopPlayback();
+    m_freshOpen = true; // fit the first image; keep zoom and position while stepping after that
+    m_displayedIndex = -1;
+    m_contentStack->setCurrentWidget(m_imageViewport->parentWidget());
+    goToImage(index);
+}
+
+bool MainWindow::isViewerVisible() const
+{
+    return m_contentStack && m_imageViewport && m_contentStack->currentWidget() == m_imageViewport->parentWidget();
+}
+
+void MainWindow::goToImage(int index)
+{
+    if (index < 0 || index >= m_currentImagePaths.size()) {
+        return;
+    }
+    if (index != m_currentImageIndex && m_currentImageIndex >= 0) {
+        m_stepDirection = index > m_currentImageIndex ? 1 : -1;
+    }
+    m_currentImageIndex = index;
+    updateImageNavigation();
+    const QString path = m_currentImagePaths.at(index);
+    if (m_displayedIndex >= 0 && !m_frameLoader->isCached(path)) {
+        // Show at once which frame is coming, even if the picture takes a moment.
+        m_imageViewport->setOverlayText(QStringLiteral("%1  …").arg(frameNumberOf(path).isEmpty()
+                                                                       ? QFileInfo(path).fileName()
+                                                                       : frameNumberOf(path)));
+    }
+    m_frameLoader->request(path);
+    prefetchAround();
+}
+
+void MainWindow::stepImage(int delta, bool wrap)
+{
+    const int count = m_currentImagePaths.size();
+    if (count == 0 || m_currentImageIndex < 0) {
+        return;
+    }
+    int index = m_currentImageIndex + delta;
+    if (wrap) {
+        index = ((index % count) + count) % count;
     } else {
-        const int imageIndex = m_currentImagePaths.indexOf(filePath);
-        if (imageIndex < 0) {
-            m_currentImagePaths.append(filePath);
-            m_currentImageIndex = m_currentImagePaths.size() - 1;
-        } else {
-            m_currentImageIndex = imageIndex;
+        index = qBound(0, index, count - 1);
+    }
+    if (index != m_currentImageIndex) {
+        m_freshOpen = false;
+        goToImage(index);
+    }
+}
+
+void MainWindow::prefetchAround()
+{
+    QStringList paths;
+    const int count = m_currentImagePaths.size();
+    const int ahead = m_playTimer.isActive() ? PrefetchAhead * 2 : PrefetchAhead;
+    for (int i = 1; i <= ahead; ++i) {
+        int index = m_currentImageIndex + i * m_stepDirection;
+        if (m_playTimer.isActive()) {
+            index = ((index % count) + count) % count;
+        }
+        if (index >= 0 && index < count) {
+            paths.append(m_currentImagePaths.at(index));
+        }
+    }
+    const int behind = m_currentImageIndex - m_stepDirection;
+    if (behind >= 0 && behind < count) {
+        paths.append(m_currentImagePaths.at(behind));
+    }
+    m_frameLoader->prefetch(paths);
+}
+
+void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
+{
+    if (!isViewerVisible() && !m_freshOpen) {
+        return;
+    }
+    const int index = m_currentImagePaths.indexOf(frame.path);
+    if (index < 0) {
+        return;
+    }
+    if (!requested) {
+        // While scrubbing, show frames that arrive on the way to the wanted one.
+        const bool between = m_displayedIndex >= 0
+            && ((m_stepDirection > 0 && index > m_displayedIndex && index < m_currentImageIndex)
+                || (m_stepDirection < 0 && index < m_displayedIndex && index > m_currentImageIndex));
+        if (!between || !frame.error.isEmpty()) {
+            return;
         }
     }
 
-    m_contentStack->setCurrentWidget(m_imageViewport->parentWidget());
-    updateImageNavigation();
-    statusBar()->showMessage(filePath, 5000);
+    if (!frame.error.isEmpty()) {
+        if (m_playTimer.isActive()) {
+            stopPlayback();
+            statusBar()->showMessage(QStringLiteral("Stopped: %1").arg(frame.error), 8000);
+        } else {
+            QMessageBox::warning(this, QStringLiteral("Could Not Open Image"),
+                                 QStringLiteral("The image could not be opened:\n%1\n\n%2")
+                                     .arg(QDir::toNativeSeparators(frame.path), frame.error));
+        }
+        return;
+    }
+
+    m_currentSourceImage = frame.source;
+    m_currentDisplayImage = frame.display;
+    m_currentImagePath = frame.path;
+    m_displayedIndex = index;
+    m_imageViewport->setImage(frame.display, !m_freshOpen);
+    m_freshOpen = false;
+
+    const QString number = frameNumberOf(frame.path);
+    m_imageViewport->setOverlayText(number.isEmpty() ? QString() : number);
+    if (m_compareMode == CompareNoView || (m_compareMode == ComparePinned && !m_pinnedSource.isNull())) {
+        updateCompare();
+    }
+    updateColorButton(m_view);
+    updateImageInfo();
+    updatePixelReadout(m_hoveredPixel);
+}
+
+void MainWindow::togglePlayback()
+{
+    if (m_playTimer.isActive()) {
+        stopPlayback();
+        return;
+    }
+    if (!isViewerVisible() || m_currentImagePaths.size() < 2) {
+        return;
+    }
+    m_stepDirection = 1;
+    m_playTimer.start();
+    prefetchAround();
+    statusBar()->showMessage(QStringLiteral("Playing at up to %1 fps (Space to stop)").arg(PlaybackFps), 3000);
+}
+
+void MainWindow::stopPlayback()
+{
+    if (m_playTimer.isActive()) {
+        m_playTimer.stop();
+        statusBar()->showMessage(QStringLiteral("Stopped"), 1500);
+    }
+}
+
+// Plays as fast as frames are ready, up to PlaybackFps: waits for a frame instead of skipping it.
+void MainWindow::playbackTick()
+{
+    const int count = m_currentImagePaths.size();
+    if (!isViewerVisible() || count < 2) {
+        stopPlayback();
+        return;
+    }
+    if (m_displayedIndex != m_currentImageIndex) {
+        return; // the current frame hasn't arrived yet
+    }
+    const int next = (m_currentImageIndex + 1) % count;
+    if (m_frameLoader->isCached(m_currentImagePaths.at(next))) {
+        stepImage(1, true);
+    } else {
+        prefetchAround();
+    }
+}
+
+bool MainWindow::handleViewerKey(QKeyEvent *event)
+{
+    const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
+    const bool plain = !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+    if (!plain) {
+        return false;
+    }
+    switch (event->key()) {
+    case Qt::Key_Right:
+    case Qt::Key_Left: {
+        stopPlayback();
+        const int step = (shift ? 10 : 1) * (event->key() == Qt::Key_Right ? 1 : -1);
+        stepImage(step);
+        return true;
+    }
+    case Qt::Key_Home:
+        stopPlayback();
+        m_freshOpen = false;
+        goToImage(0);
+        return true;
+    case Qt::Key_End:
+        stopPlayback();
+        m_freshOpen = false;
+        goToImage(m_currentImagePaths.size() - 1);
+        return true;
+    case Qt::Key_Space:
+        if (!event->isAutoRepeat()) {
+            togglePlayback();
+        }
+        return true;
+    case Qt::Key_Escape:
+        if (m_playTimer.isActive()) {
+            stopPlayback();
+        } else if (m_fullScreenAction->isChecked()) {
+            m_fullScreenAction->setChecked(false);
+        } else {
+            showGrid();
+        }
+        return true;
+    case Qt::Key_W:
+        if (!event->isAutoRepeat()) {
+            setCompareMode(m_compareMode == CompareOff ? m_lastCompareMode : CompareOff);
+        }
+        return true;
+    case Qt::Key_P:
+        if (!event->isAutoRepeat()) {
+            pinCurrentImage();
+        }
+        return true;
+    case Qt::Key_F:
+        m_imageViewport->fitToWindow();
+        return true;
+    case Qt::Key_1:
+        m_imageViewport->zoomActualSize();
+        return true;
+    case Qt::Key_R:
+        setChannel(int(ImageViewport::Channel::Red), true);
+        return true;
+    case Qt::Key_G:
+        setChannel(int(ImageViewport::Channel::Green), true);
+        return true;
+    case Qt::Key_B:
+        setChannel(int(ImageViewport::Channel::Blue), true);
+        return true;
+    case Qt::Key_A:
+        setChannel(int(ImageViewport::Channel::Alpha), true);
+        return true;
+    case Qt::Key_L:
+        setChannel(int(ImageViewport::Channel::Luma), true);
+        return true;
+    case Qt::Key_C:
+        if (!event->isAutoRepeat()) {
+            m_clippingAction->toggle();
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Re-renders the shown image after a view or LUT change, keeping zoom and position.
+void MainWindow::refreshCurrentDisplay()
+{
+    m_frameLoader->setRender(m_view, m_input);
+    if (!m_currentSourceImage.isNull()) {
+        m_currentDisplayImage = ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input);
+        m_imageViewport->setImage(m_currentDisplayImage, true);
+        updateCompare();
+        updateImageInfo();
+        updatePixelReadout(m_hoveredPixel);
+    }
+    updateColorButton(m_view);
+}
+
+void MainWindow::setCompareMode(CompareMode mode)
+{
+    if (mode == ComparePinned && m_pinnedSource.isNull()) {
+        pinCurrentImage();
+        return;
+    }
+    m_compareMode = mode;
+    if (mode != CompareOff) {
+        m_lastCompareMode = mode;
+    }
+    for (QAction *action : m_compareGroup->actions()) {
+        action->setChecked(action->data().toInt() == int(mode));
+    }
+    updateCompare();
+}
+
+void MainWindow::pinCurrentImage()
+{
+    if (m_currentSourceImage.isNull()) {
+        statusBar()->showMessage(QStringLiteral("Open an image first, then pin it (P)"), 4000);
+        return;
+    }
+    m_pinnedSource = m_currentSourceImage;
+    m_pinnedPath = m_currentImagePath;
+    m_pinnedDisplay = QImage();
+    statusBar()->showMessage(QStringLiteral("Pinned %1 for compare: go to another image to wipe between them")
+                                 .arg(QFileInfo(m_pinnedPath).fileName()), 5000);
+    setCompareMode(ComparePinned);
+}
+
+void MainWindow::updateCompare()
+{
+    if (m_compareMode == CompareOff || m_currentSourceImage.isNull()) {
+        m_imageViewport->setWipeEnabled(false);
+        return;
+    }
+    const ColorTransform::View shown = ColorTransform::resolveView(m_view, m_currentSourceImage);
+    if (m_compareMode == CompareNoView) {
+        m_imageViewport->setCompareImage(ColorTransform::toDisplay(m_currentSourceImage, ColorTransform::View::None, m_input),
+                                         QStringLiteral("Original (no color view)"),
+                                         ColorTransform::displayName(shown));
+    } else {
+        // The pinned image only needs rendering again when the view changes, not on every frame.
+        const QString key = ColorTransform::cacheKey(m_view) + QString::number(int(m_input));
+        if (m_pinnedDisplay.isNull() || m_pinnedDisplayKey != key) {
+            m_pinnedDisplay = ColorTransform::toDisplay(m_pinnedSource, m_view, m_input);
+            m_pinnedDisplayKey = key;
+        }
+        m_imageViewport->setCompareImage(m_pinnedDisplay,
+                                         QStringLiteral("A: %1").arg(QFileInfo(m_pinnedPath).completeBaseName()),
+                                         QStringLiteral("B: %1").arg(QFileInfo(m_currentImagePath).completeBaseName()));
+    }
+    m_imageViewport->setWipeEnabled(true);
+}
+
+void MainWindow::updateImageInfo()
+{
+    if (!isViewerVisible() || m_currentSourceImage.isNull()) {
+        m_infoLabel->setText(m_currentFolderPath.isEmpty()
+                                 ? QString()
+                                 : QStringLiteral("%1 images").arg(m_currentImagePaths.size()));
+        return;
+    }
+    QStringList parts;
+    parts.append(QFileInfo(m_currentImagePath).fileName());
+    parts.append(QStringLiteral("%1 × %2").arg(m_currentSourceImage.width()).arg(m_currentSourceImage.height()));
+    const QString source = ColorTransform::describeSource(m_currentSourceImage, m_input);
+    if (!source.isEmpty()) {
+        parts.append(source);
+    }
+    parts.append(QStringLiteral("%1 / %2").arg(m_currentImageIndex + 1).arg(m_currentImagePaths.size()));
+    m_infoLabel->setText(parts.join(QStringLiteral("   ·   ")));
+}
+
+void MainWindow::updatePixelReadout(const QPoint &pixel)
+{
+    m_hoveredPixel = pixel;
+    if (!isViewerVisible() || pixel.x() < 0 || m_currentSourceImage.isNull()
+        || !m_currentDisplayImage.rect().contains(pixel)) {
+        m_pixelLabel->clear();
+        return;
+    }
+    const QRgb shown = m_currentDisplayImage.pixel(pixel);
+    m_pixelLabel->setText(QStringLiteral("x %1  y %2   stored %3   display %4 %5 %6")
+                              .arg(pixel.x(), 4)
+                              .arg(pixel.y(), 4)
+                              .arg(storedPixelText(m_currentSourceImage, pixel))
+                              .arg(qRed(shown), 3)
+                              .arg(qGreen(shown), 3)
+                              .arg(qBlue(shown), 3));
+}
+
+void MainWindow::handlePathActivated(const QString &path)
+{
+    const QFileInfo info(path);
+    if (info.isDir()) {
+        populateFileGrid(info.absoluteFilePath());
+        return;
+    }
+    if (info.isFile() && isImageFile(info.absoluteFilePath())) {
+        if (QDir::cleanPath(info.absolutePath()) != QDir::cleanPath(m_currentFolderPath)) {
+            populateFileGrid(info.absolutePath());
+        }
+        openImagePath(info.absoluteFilePath());
+        return;
+    }
+    statusBar()->showMessage(QStringLiteral("Not found: %1").arg(QDir::toNativeSeparators(path)), 5000);
+    m_pathBar->setPath(m_currentFolderPath);
+}
+
+void MainWindow::openPath(const QString &path)
+{
+    handlePathActivated(path);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls()) {
+        for (const QUrl &url : event->mimeData()->urls()) {
+            if (url.isLocalFile()) {
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    QMainWindow::dragEnterEvent(event);
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    for (const QUrl &url : event->mimeData()->urls()) {
+        if (url.isLocalFile()) {
+            event->acceptProposedAction();
+            activateWindow();
+            openPath(url.toLocalFile());
+            return;
+        }
+    }
+    QMainWindow::dropEvent(event);
+}
+
+void MainWindow::setChannel(int channel, bool toggle)
+{
+    auto wanted = static_cast<ImageViewport::Channel>(channel);
+    if (toggle && m_imageViewport->channel() == wanted) {
+        wanted = ImageViewport::Channel::Rgb;
+    }
+    m_imageViewport->setChannel(wanted);
+    for (QAction *action : m_channelGroup->actions()) {
+        action->setChecked(action->data().toInt() == int(wanted));
+    }
+}
+
+void MainWindow::setFullScreenMode(bool on)
+{
+    if (on == isFullScreen()) {
+        return;
+    }
+    if (on) {
+        m_wasMaximized = isMaximized();
+        m_hiddenForFullScreen.clear();
+        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel};
+        for (QToolBar *toolbar : findChildren<QToolBar *>()) {
+            chrome.append(toolbar);
+        }
+        for (QWidget *widget : chrome) {
+            if (widget && widget->isVisible()) {
+                widget->hide();
+                m_hiddenForFullScreen.append(widget);
+            }
+        }
+        showFullScreen();
+    } else {
+        for (QWidget *widget : std::as_const(m_hiddenForFullScreen)) {
+            widget->show();
+        }
+        m_hiddenForFullScreen.clear();
+        if (m_wasMaximized) {
+            showMaximized();
+        } else {
+            showNormal();
+        }
+    }
+    if (isViewerVisible()) {
+        m_imageViewport->setFocus();
+    }
+}
+
+QString MainWindow::currentPath() const
+{
+    if (isViewerVisible() && !m_currentImagePath.isEmpty()) {
+        return m_currentImagePath;
+    }
+    if (const QListWidgetItem *item = m_fileGrid->currentItem(); item && item->isSelected()) {
+        return item->data(FilePathRole).toString();
+    }
+    return m_currentFolderPath;
+}
+
+void MainWindow::copyImageToClipboard()
+{
+    if (!isViewerVisible() || m_currentDisplayImage.isNull()) {
+        copyPathToClipboard(currentPath());
+        return;
+    }
+    QApplication::clipboard()->setImage(m_currentDisplayImage);
+    statusBar()->showMessage(QStringLiteral("Copied %1 (as shown) to the clipboard")
+                                 .arg(QFileInfo(m_currentImagePath).fileName()), 3000);
+}
+
+void MainWindow::copyPathToClipboard(const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    const QString native = QDir::toNativeSeparators(path);
+    QApplication::clipboard()->setText(native);
+    statusBar()->showMessage(QStringLiteral("Copied %1").arg(native), 3000);
+}
+
+void MainWindow::showInExplorer(const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    const QFileInfo info(path);
+#ifdef Q_OS_WIN
+    // Opens the folder with the file selected.
+    if (info.exists()) {
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                {QStringLiteral("/select,"), QDir::toNativeSeparators(info.absoluteFilePath())});
+        return;
+    }
+#endif
+    QDesktopServices::openUrl(QUrl::fromLocalFile(info.isDir() ? info.absoluteFilePath() : info.absolutePath()));
+}
+
+void MainWindow::showGridContextMenu(const QPoint &pos)
+{
+    QListWidgetItem *item = m_fileGrid->itemAt(pos);
+    const QString path = item ? item->data(FilePathRole).toString() : m_currentFolderPath;
+    if (path.isEmpty()) {
+        return;
+    }
+    QMenu menu(this);
+    if (item) {
+        menu.addAction(QStringLiteral("Open"), this, [this, item]() {
+            handleGridItemActivated(item);
+        });
+        menu.addSeparator();
+    }
+    menu.addAction(QStringLiteral("Copy Path"), this, [this, path]() {
+        copyPathToClipboard(path);
+    });
+    menu.addAction(m_showInExplorerAction->text(), this, [this, path]() {
+        showInExplorer(path);
+    });
+    menu.exec(m_fileGrid->viewport()->mapToGlobal(pos));
 }
 
 void MainWindow::setViewTransform(ColorTransform::View view)
@@ -742,9 +1461,7 @@ void MainWindow::setViewTransform(ColorTransform::View view)
     QSettings().setValue(SettingsViewTransform, ColorTransform::settingsKey(view));
     statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)), 3000);
 
-    if (!m_currentSourceImage.isNull()) {
-        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
-    }
+    refreshCurrentDisplay();
     resetThumbnails();
 }
 
@@ -754,9 +1471,7 @@ void MainWindow::setInput(ColorTransform::Input input)
     updateInputActions();
     QSettings().setValue(SettingsInput, ColorTransform::inputSettingsKey(input));
     statusBar()->showMessage(QStringLiteral("EXR input: %1").arg(ColorTransform::inputDisplayName(input)), 3000);
-    if (!m_currentSourceImage.isNull()) {
-        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
-    }
+    refreshCurrentDisplay();
     resetThumbnails();
 }
 
@@ -795,9 +1510,8 @@ void MainWindow::chooseArriLutFolder()
     QMessageBox::information(this, QStringLiteral("ARRI LUTs"),
                              QStringLiteral("LogC3: %1\nLogC4: %2").arg(describe(logC3), describe(logC4)));
     updateLutActions();
-    if (!m_currentSourceImage.isNull()) {
-        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
-    }
+    m_frameLoader->clear();
+    refreshCurrentDisplay();
     resetThumbnails();
 }
 
@@ -838,9 +1552,8 @@ void MainWindow::useLutFile(const QString &filePath)
     if (m_view == ColorTransform::View::CustomLut) {
         // Same view, new LUT: re-render explicitly.
         statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)), 3000);
-        if (!m_currentSourceImage.isNull()) {
-            m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
-        }
+        m_frameLoader->clear();
+        refreshCurrentDisplay();
         resetThumbnails();
     } else {
         setViewTransform(ColorTransform::View::CustomLut);
@@ -914,7 +1627,6 @@ void MainWindow::setFolderPanelVisible(bool visible)
 void MainWindow::handleFolderSelected(const QString &folderPath)
 {
     populateFileGrid(folderPath);
-    m_folderPathLabel->setText(folderPath);
     statusBar()->showMessage(QStringLiteral("Selected folder: %1").arg(folderPath), 3000);
 }
 
@@ -927,7 +1639,6 @@ void MainWindow::handleGridItemActivated(QListWidgetItem *item)
     const QString path = item->data(FilePathRole).toString();
     if (item->data(IsFolderRole).toBool()) {
         populateFileGrid(path);
-        m_folderPathLabel->setText(path);
         statusBar()->showMessage(QStringLiteral("Selected folder: %1").arg(path), 3000);
         return;
     }
@@ -996,7 +1707,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         }
     }
 
+    stopPlayback();
     showGrid();
+    m_pathBar->setPath(folderPath);
     updateBackAction();
     if (m_folderTreePanel && m_folderTreePanel->isVisible()) {
         m_folderTreePanel->showFolder(folderPath);
@@ -1014,7 +1727,6 @@ void MainWindow::navigateBack()
 
     const QString folderPath = m_folderHistory.takeLast();
     populateFileGrid(folderPath, false);
-    m_folderPathLabel->setText(folderPath);
     statusBar()->showMessage(QStringLiteral("Selected folder: %1").arg(folderPath), 3000);
     updateBackAction();
 }
@@ -1028,36 +1740,35 @@ void MainWindow::updateBackAction()
 
 void MainWindow::showGrid()
 {
+    stopPlayback();
     m_contentStack->setCurrentWidget(m_fileGrid);
+    m_pixelLabel->clear();
+    updateImageInfo();
+    updateColorButton(m_view);
+    // Keep the grid on the image that was being viewed.
+    if (m_currentImageIndex >= 0 && m_currentImageIndex < m_currentImagePaths.size()) {
+        if (QListWidgetItem *item = m_thumbnailItems.value(m_currentImagePaths.at(m_currentImageIndex))) {
+            m_fileGrid->setCurrentItem(item);
+            m_fileGrid->scrollToItem(item);
+        }
+    }
 }
 
 void MainWindow::showCurrentImage()
 {
-    if (m_currentImageIndex < 0 || m_currentImageIndex >= m_currentImagePaths.size()) {
-        return;
-    }
-
-    openImagePath(m_currentImagePaths.at(m_currentImageIndex));
+    goToImage(m_currentImageIndex);
 }
 
 void MainWindow::showNextImage()
 {
-    if (m_currentImageIndex + 1 >= m_currentImagePaths.size()) {
-        return;
-    }
-
-    ++m_currentImageIndex;
-    showCurrentImage();
+    stopPlayback();
+    stepImage(1);
 }
 
 void MainWindow::showPreviousImage()
 {
-    if (m_currentImageIndex <= 0) {
-        return;
-    }
-
-    --m_currentImageIndex;
-    showCurrentImage();
+    stopPlayback();
+    stepImage(-1);
 }
 
 void MainWindow::updateImageNavigation()
