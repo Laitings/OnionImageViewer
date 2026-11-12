@@ -45,3 +45,7 @@ MinSizeRel/
 *.obj
 *.lib
 vcpkg_installed/
+
+# Installer output
+installer/stage/
+installer/Output/
