@@ -233,6 +233,44 @@ QString attributeText(const Imf::Attribute &attribute)
     return QStringLiteral("(%1)").arg(QString::fromLatin1(attribute.typeName()));
 }
 
+// Sorts EXR attributes into readable groups. Camera files from ARRI carry dozens of camera,
+// lens and media tags, and Nuke adds its own "nuke/..." ones on top.
+QString exrGroup(const QString &name)
+{
+    static const QStringList standard = {
+        QStringLiteral("channels"), QStringLiteral("chromaticities"), QStringLiteral("chunkCount"),
+        QStringLiteral("compression"), QStringLiteral("compressionName"), QStringLiteral("dataWindow"),
+        QStringLiteral("displayWindow"), QStringLiteral("lineOrder"), QStringLiteral("name"),
+        QStringLiteral("pixelAspectRatio"), QStringLiteral("screenWindowCenter"), QStringLiteral("screenWindowWidth"),
+        QStringLiteral("tiles"), QStringLiteral("type"), QStringLiteral("version"), QStringLiteral("preview"),
+        QStringLiteral("acesImageContainerFlag"), QStringLiteral("whiteLuminance"), QStringLiteral("adoptedNeutral"),
+        QStringLiteral("multiView"), QStringLiteral("view"), QStringLiteral("dwaCompressionLevel"),
+    };
+    static const QStringList camera = {
+        QStringLiteral("camera"), QStringLiteral("lens"), QStringLiteral("iso"), QStringLiteral("shutter"),
+        QStringLiteral("focus"), QStringLiteral("tilt"), QStringLiteral("roll"), QStringLiteral("owner"),
+        QStringLiteral("reel"), QStringLiteral("capDate"), QStringLiteral("captureRate"), QStringLiteral("tech_details"),
+        QStringLiteral("frame_capture"), QStringLiteral("medium"), QStringLiteral("proim"), QStringLiteral("interim"),
+        QStringLiteral("shoot_"), QStringLiteral("timeCode"), QStringLiteral("framesPerSecond"), QStringLiteral("lut3D"),
+        QStringLiteral("frameline"), QStringLiteral("circleOfConfusion"), QStringLiteral("keyCode"),
+        QStringLiteral("aperture"), QStringLiteral("expTime"), QStringLiteral("focalLength"), QStringLiteral("utcOffset"),
+        QStringLiteral("longitude"), QStringLiteral("latitude"), QStringLiteral("altitude"), QStringLiteral("comments"),
+        QStringLiteral("capDate"), QStringLiteral("originalDataWindow"), QStringLiteral("isoSpeed"),
+    };
+    if (name.startsWith(QStringLiteral("nuke/"))) {
+        return QStringLiteral("Nuke");
+    }
+    if (standard.contains(name)) {
+        return QStringLiteral("EXR");
+    }
+    for (const QString &prefix : camera) {
+        if (name.startsWith(prefix, Qt::CaseInsensitive)) {
+            return QStringLiteral("Camera and lens");
+        }
+    }
+    return QStringLiteral("Other");
+}
+
 void addExrEntries(QList<Entry> &entries, const QString &filePath)
 {
     try {
@@ -241,14 +279,23 @@ void addExrEntries(QList<Entry> &entries, const QString &filePath)
         const int parts = file.parts();
         for (int part = 0; part < parts; ++part) {
             const Imf::Header &header = file.header(part);
-            QString group = QStringLiteral("EXR");
+            QString partPrefix;
             if (parts > 1) {
                 const QString name = header.hasName() ? QString::fromUtf8(header.name().c_str()) : QString();
-                group = name.isEmpty() ? QStringLiteral("EXR part %1").arg(part + 1)
-                                       : QStringLiteral("EXR part %1 (%2)").arg(part + 1).arg(name);
+                partPrefix = name.isEmpty() ? QStringLiteral("Part %1: ").arg(part + 1)
+                                            : QStringLiteral("Part %1 (%2): ").arg(part + 1).arg(name);
             }
+            // Groups in a fixed order; attributes stay alphabetical within each.
+            const QStringList order = {QStringLiteral("EXR"), QStringLiteral("Camera and lens"),
+                                       QStringLiteral("Nuke"), QStringLiteral("Other")};
+            QList<Entry> grouped[4];
             for (auto it = header.begin(); it != header.end(); ++it) {
-                entries.append({group, QString::fromUtf8(it.name()), attributeText(it.attribute())});
+                const QString name = QString::fromUtf8(it.name());
+                const QString group = exrGroup(name);
+                grouped[order.indexOf(group)].append({partPrefix + group, name, attributeText(it.attribute())});
+            }
+            for (const QList<Entry> &list : grouped) {
+                entries.append(list);
             }
         }
     } catch (const std::exception &exception) {
