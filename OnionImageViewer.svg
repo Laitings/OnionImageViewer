@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="OnionImageViewer">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#35234E"/><stop offset="1" stop-color="#1B132D"/></linearGradient>
+    <linearGradient id="skin" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#FFE0C8"/><stop offset=".48" stop-color="#F4A9D9"/><stop offset="1" stop-color="#B184F4"/></linearGradient>
+  </defs>
+  <path fill="url(#tile)" stroke="#583B6B" stroke-width="2" d="M 61,12 H 195 C 223,12 244,33 244,61 V 195 C 244,223 223,244 195,244 H 61 C 33,244 12,223 12,195 V 61 C 12,33 33,12 61,12 Z"/>
+  <path fill="url(#skin)" d="M 127,35 C 132,48 145,59 163,72 C 187,89 203,108 203,136 C 203,175 172,201 128,201 C 84,201 53,175 53,136 C 53,109 69,90 92,73 C 110,60 121,49 127,35 Z"/>
+  <path fill="#39264F" d="M 128,68 C 142,84 180,102 180,137 C 180,165 158,183 128,183 C 98,183 76,165 76,137 C 76,103 113,85 128,68 Z"/>
+  <path fill="#FFD0E3" d="M 88,151 L 112,124 Q 116,119 120,124 L 133,138 L 143,128 Q 146,125 150,129 L 168,150 C 163,166 148,174 128,174 C 108,174 94,166 88,151 Z"/>
+  <path fill="#FFDDB3" d="M 154,112 A 8,8 0 1 1 138,112 A 8,8 0 1 1 154,112 Z"/>
+  <path fill="none" stroke="#BE91ED" stroke-width="5" stroke-linecap="round" d="M 113,211 Q 128,218 143,211"/>
+</svg>
