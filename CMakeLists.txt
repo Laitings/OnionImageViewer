@@ -22,7 +22,7 @@ if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
 endif()
 
 project(OnionImageViewer
-    VERSION 1.0.2
+    VERSION 1.0.3
     LANGUAGES CXX
 )
 
