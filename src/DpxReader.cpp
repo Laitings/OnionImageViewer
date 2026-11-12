@@ -369,13 +369,9 @@ QImage read(const QString &filePath, QString *error, const QSize &targetSize)
         return QImage();
     }
 
-    const qint64 size = file.size();
-    if (uchar *mapped = file.map(0, size)) {
-        const QImage image = decode(mapped, size, error, targetSize);
-        file.unmap(mapped);
-        return image;
-    }
-
+    // Read the file in one sequential pass. Memory-mapping and touching only the lines we need
+    // looks cheaper, but on network shares every touched page becomes its own small request,
+    // which made thumbnails several times slower than just reading the whole file.
     const QByteArray bytes = file.readAll();
     return decode(reinterpret_cast<const uchar *>(bytes.constData()), bytes.size(), error, targetSize);
 }

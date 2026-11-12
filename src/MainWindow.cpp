@@ -634,6 +634,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_fileGrid->clear();
 
     QFileIconProvider iconProvider;
+    // Look the placeholder icon up once: each standardIcon() call is slow (~17 ms with the
+    // Windows 11 style), which made a 5000-file folder take over a minute to open.
+    const QIcon imagePlaceholderIcon = style()->standardIcon(QStyle::SP_FileIcon);
     const QFileInfoList folders = folder.entryInfoList(
         QDir::Dirs | QDir::NoDotAndDotDot,
         QDir::Name | QDir::DirsFirst | QDir::IgnoreCase);
@@ -647,13 +650,13 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     }
 
     const QFileInfoList files = folder.entryInfoList(
-        QDir::Files | QDir::Readable,
+        QDir::Files,
         QDir::Name | QDir::IgnoreCase);
 
     for (const QFileInfo &fileInfo : files) {
         const QString filePath = fileInfo.absoluteFilePath();
         const bool image = isImageFile(filePath);
-        const QIcon icon = image ? style()->standardIcon(QStyle::SP_FileIcon) : iconProvider.icon(fileInfo);
+        const QIcon icon = image ? imagePlaceholderIcon : iconProvider.icon(fileInfo);
         auto *item = new QListWidgetItem(icon, fileInfo.fileName(), m_fileGrid);
         item->setData(FilePathRole, filePath);
         item->setData(IsFolderRole, false);
@@ -745,7 +748,7 @@ void MainWindow::setImageListFromFolder(const QString &folderPath)
 
     m_currentImagePaths.clear();
     const QFileInfoList files = folder.entryInfoList(
-        QDir::Files | QDir::Readable,
+        QDir::Files,
         QDir::Name | QDir::IgnoreCase);
 
     for (const QFileInfo &fileInfo : files) {
