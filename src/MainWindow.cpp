@@ -46,6 +46,7 @@
 #ifdef Q_OS_WIN
 #include <objbase.h>
 #include <shobjidl.h>
+#include <thumbcache.h>
 #include <wrl/client.h>
 #include <windows.h>
 
@@ -63,6 +64,8 @@ const int ThumbnailLoadedRole = Qt::UserRole + 3;
 const QSize ThumbnailSize(128, 128);
 constexpr int ThumbnailScheduleDelayMs = 60;
 constexpr int MaxPendingThumbnails = 64;
+constexpr int ThumbnailRetryDelayMs = 2000;
+constexpr int MaxThumbnailRetries = 30; // about a minute of retries
 
 QStringList supportedImageSuffixes()
 {
@@ -160,7 +163,9 @@ bool isCloudOnlyFile(const QString &filePath)
     return (attributes & (FILE_ATTRIBUTE_OFFLINE | RecallOnOpen | RecallOnDataAccess)) != 0;
 }
 
-QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags)
+// pending is set when Windows has queued a background fetch for the thumbnail (typical for
+// OneDrive online-only files the first time). Asking again a little later returns it.
+QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags, bool *pending = nullptr)
 {
     const HRESULT initializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool shouldUninitialize = SUCCEEDED(initializeResult);
@@ -186,6 +191,8 @@ QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags)
         if (SUCCEEDED(thumbnailResult) && bitmap) {
             thumbnail = imageFromHBitmap(bitmap);
             DeleteObject(bitmap);
+        } else if (thumbnailResult == WTS_E_EXTRACTIONPENDING && pending) {
+            *pending = true;
         }
     }
 
@@ -211,8 +218,9 @@ QImage readerThumbnailForImage(const QString &filePath)
     return reader.read();
 }
 
-QImage loadThumbnailImage(const QString &filePath)
+QImage loadThumbnailImage(const QString &filePath, bool *pending)
 {
+    *pending = false;
     const QFileInfo fileInfo(filePath);
     const QString cachePath = thumbnailCachePath(fileInfo);
 
@@ -228,15 +236,19 @@ QImage loadThumbnailImage(const QString &filePath)
         // the cloud, the same way Explorer shows them). If neither has one, keep the plain icon.
         thumbnail = shellThumbnailForImage(filePath, SIIGBF_INCACHEONLY);
         if (thumbnail.isNull()) {
-            thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
+            thumbnail = shellThumbnailForImage(filePath, SIIGBF(0), pending);
         }
         if (!thumbnail.isNull()) {
+            thumbnail = thumbnail.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             thumbnail.save(cachePath, "PNG");
         }
         return thumbnail;
     }
 
     thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
+    if (!thumbnail.isNull()) {
+        thumbnail = thumbnail.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
 #endif
 
     if (thumbnail.isNull()) {
@@ -274,6 +286,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_thumbnailScheduleTimer.setSingleShot(true);
     m_thumbnailScheduleTimer.setInterval(ThumbnailScheduleDelayMs);
     connect(&m_thumbnailScheduleTimer, &QTimer::timeout, this, &MainWindow::scheduleVisibleThumbnails);
+
+    m_thumbnailRetryTimer.setSingleShot(true);
+    m_thumbnailRetryTimer.setInterval(ThumbnailRetryDelayMs);
+    connect(&m_thumbnailRetryTimer, &QTimer::timeout, this, &MainWindow::scheduleVisibleThumbnails);
 }
 
 MainWindow::~MainWindow()
@@ -591,6 +607,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_currentImageIndex = -1;
     m_pendingThumbnailPaths.clear();
     m_thumbnailItems.clear();
+    m_thumbnailRetryCounts.clear();
+    m_thumbnailRetryTimer.stop();
     m_thumbnailPool.clear();
     ++m_thumbnailGeneration;
     m_fileGrid->clear();
@@ -766,17 +784,18 @@ void MainWindow::requestThumbnail(QListWidgetItem *item)
     m_pendingThumbnailPaths.insert(filePath);
 
     m_thumbnailPool.start([this, filePath, generation]() {
-        const QImage thumbnail = loadThumbnailImage(filePath);
+        bool pending = false;
+        const QImage thumbnail = loadThumbnailImage(filePath, &pending);
         QMetaObject::invokeMethod(
             this,
-            [this, filePath, generation, thumbnail]() {
-                applyThumbnail(filePath, generation, thumbnail);
+            [this, filePath, generation, thumbnail, pending]() {
+                applyThumbnail(filePath, generation, thumbnail, pending);
             },
             Qt::QueuedConnection);
     });
 }
 
-void MainWindow::applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail)
+void MainWindow::applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending)
 {
     if (generation != m_thumbnailGeneration) {
         return;
@@ -788,8 +807,21 @@ void MainWindow::applyThumbnail(const QString &filePath, int generation, const Q
         return;
     }
 
+    if (pending && thumbnail.isNull()) {
+        // Windows is fetching this thumbnail in the background (OneDrive online-only files).
+        // Leave the item unloaded and look again shortly, a limited number of times.
+        int &attempts = m_thumbnailRetryCounts[filePath];
+        if (++attempts <= MaxThumbnailRetries) {
+            if (!m_thumbnailRetryTimer.isActive()) {
+                m_thumbnailRetryTimer.start();
+            }
+            return;
+        }
+    }
+
     // Mark the item as done even when no thumbnail could be made, so it is not requested again
     // on every scroll or resize.
+    m_thumbnailRetryCounts.remove(filePath);
     item->setData(ThumbnailLoadedRole, true);
     if (!thumbnail.isNull()) {
         item->setIcon(QIcon(QPixmap::fromImage(thumbnail)));
