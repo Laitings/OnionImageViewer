@@ -114,9 +114,8 @@ QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view,
     if (view != ColorTransform::View::None) {
         cacheKeySource += QStringLiteral("|") + ColorTransform::cacheKey(view);
     }
-    if (input != ColorTransform::Input::AsStored) {
-        cacheKeySource += QStringLiteral("|in=") + ColorTransform::inputSettingsKey(input);
-    }
+    // "r3": how EXRs are interpreted changed (camera log tags), so older thumbnails are stale.
+    cacheKeySource += QStringLiteral("|in=") + ColorTransform::inputSettingsKey(input) + QStringLiteral("|r3");
 
     const QByteArray cacheKey = QCryptographicHash::hash(cacheKeySource.toUtf8(), QCryptographicHash::Sha256).toHex();
     return thumbnailCacheDirectory() + QStringLiteral("/") + QString::fromLatin1(cacheKey) + QStringLiteral(".png");
@@ -435,7 +434,7 @@ void MainWindow::createActions()
     // Input: what EXR values are (ACES comps need converting to the camera log first).
     m_inputGroup = new QActionGroup(this);
     m_inputGroup->setExclusive(true);
-    for (ColorTransform::Input input : {ColorTransform::Input::Auto, ColorTransform::Input::AsStored,
+    for (ColorTransform::Input input : {ColorTransform::Input::Auto, ColorTransform::Input::CameraLog, ColorTransform::Input::Linear,
                                         ColorTransform::Input::Aces2065, ColorTransform::Input::AcesCg}) {
         auto *action = new QAction(ColorTransform::inputDisplayName(input), m_inputGroup);
         action->setCheckable(true);

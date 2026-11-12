@@ -9,6 +9,7 @@
 #include <ImfChannelList.h>
 #include <ImfChromaticitiesAttribute.h>
 #include <ImfIntAttribute.h>
+#include <ImfStringAttribute.h>
 #include <ImfHeader.h>
 #include <ImfPreviewImage.h>
 #include <ImfRgbaFile.h>
@@ -58,9 +59,9 @@ std::string displayLayer(const Imf::Header &header)
     return std::string();
 }
 
-// Tags ACES files so the viewer can convert them: the ACES container flag or ACES AP0/AP1
-// chromaticities. Camera tags such as ARRI's tech_details_gamma_space are not trusted, because
-// compositing apps copy them over from the plate even when they write ACES linear.
+// Tags what the values are: ACES (container flag or AP0/AP1 chromaticities) or camera log
+// (ARRI's tech_details_gamma_space). ACES tags win, because compositing apps copy the camera
+// tags over from the plate even when they write ACES linear.
 QString colorSpaceTag(const Imf::Header &header)
 {
     auto near = [](const Imath::V2f &a, float x, float y) {
@@ -79,6 +80,13 @@ QString colorSpaceTag(const Imf::Header &header)
     if (const auto *flag = header.findTypedAttribute<Imf::IntAttribute>("acesImageContainerFlag")) {
         if (flag->value() == 1) {
             return ColorTransform::inputSettingsKey(ColorTransform::Input::Aces2065);
+        }
+    }
+    // Camera plates written straight from ARRI footage say what curve they hold. Only trusted
+    // when nothing above marked the file as ACES.
+    if (const auto *gamma = header.findTypedAttribute<Imf::StringAttribute>("tech_details_gamma_space")) {
+        if (QString::fromStdString(gamma->value()).contains(QStringLiteral("log"), Qt::CaseInsensitive)) {
+            return ColorTransform::inputSettingsKey(ColorTransform::Input::CameraLog);
         }
     }
     return QString();
