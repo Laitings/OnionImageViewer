@@ -32,6 +32,7 @@
 #include <QGridLayout>
 #include <QIcon>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QKeySequence>
 #include <QKeyEvent>
 #include <QFloat16>
@@ -87,6 +88,8 @@ const QString SettingsLutFile = QStringLiteral("view/lutFile");
 const QString SettingsArriLutFolder = QStringLiteral("view/arriLutFolder");
 const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
 const QString SettingsRecentImages = QStringLiteral("file/recentImages");
+const QString SettingsExportFolder = QStringLiteral("export/folder");
+const QString SettingsExportFormat = QStringLiteral("export/format");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
@@ -600,6 +603,11 @@ void MainWindow::createActions()
     connect(m_fullScreenAction, &QAction::toggled, this, &MainWindow::setFullScreenMode);
     addAction(m_fullScreenAction); // keeps F11 working while the menu bar is hidden
 
+    m_exportAction = new QAction(QStringLiteral("Export As…"), this);
+    m_exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    m_exportAction->setToolTip(QStringLiteral("Save the picture as shown, with the color view or LUT burned in"));
+    connect(m_exportAction, &QAction::triggered, this, &MainWindow::exportImageAs);
+
     m_copyImageAction = new QAction(QStringLiteral("Copy Image"), this);
     m_copyImageAction->setShortcut(QKeySequence::Copy);
     m_copyImageAction->setToolTip(QStringLiteral("Copy the picture as shown (with the color view) to the clipboard"));
@@ -658,6 +666,8 @@ void MainWindow::createMenus()
     m_recentImagesMenu->setToolTipsVisible(true);
     updateRecentImagesMenu();
     fileMenu->addSeparator();
+    fileMenu->addAction(m_exportAction);
+    fileMenu->addSeparator();
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
     fileMenu->addAction(m_showInExplorerAction);
@@ -699,7 +709,7 @@ void MainWindow::createMenus()
             "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
             "  C  show clipping\n"
             "  I  metadata panel (Ctrl+I anywhere)\n"
-            "  Ctrl+C  copy the picture\n"
+            "  Ctrl+C  copy the picture,  Ctrl+Shift+S  export it with the LUT burned in\n"
             "  Esc  leave full screen, then back to the grid\n\n"
             "Color:\n"
             "  Ctrl+1  Auto (from file tags)\n"
@@ -1386,6 +1396,7 @@ void MainWindow::showViewerContextMenu(const QPoint &pos)
         }
         menu.addSeparator();
     }
+    menu.addAction(m_exportAction);
     menu.addAction(m_copyImageAction);
     menu.addAction(m_copyPathAction);
     menu.addAction(m_showInExplorerAction);
@@ -1543,6 +1554,123 @@ void MainWindow::loadMetadata()
             }
         }, Qt::QueuedConnection);
     });
+}
+
+// Saves the picture as it is shown (color view or LUT applied, 8 bits per channel) in a common
+// format. Channel isolation and the clipping overlay are viewing aids and are not exported.
+void MainWindow::exportImageAs()
+{
+    if (!isViewerVisible() || m_currentDisplayImage.isNull()) {
+        statusBar()->showMessage(QStringLiteral("Open an image first, then export it"), 4000);
+        return;
+    }
+
+    struct Format
+    {
+        QString name;
+        QString suffix;
+        QByteArray writer;
+    };
+    const QList<QByteArray> writable = QImageWriter::supportedImageFormats();
+    QList<Format> formats;
+    const Format candidates[] = {
+        {QStringLiteral("PNG"), QStringLiteral("png"), "png"},
+        {QStringLiteral("JPEG"), QStringLiteral("jpg"), "jpeg"},
+        {QStringLiteral("TIFF"), QStringLiteral("tif"), "tiff"},
+        {QStringLiteral("WebP"), QStringLiteral("webp"), "webp"},
+        {QStringLiteral("BMP"), QStringLiteral("bmp"), "bmp"},
+    };
+    for (const Format &format : candidates) {
+        if (writable.contains(format.writer)) {
+            formats.append(format);
+        }
+    }
+    QStringList filters;
+    for (const Format &format : formats) {
+        filters << QStringLiteral("%1 (*.%2)").arg(format.name, format.suffix);
+    }
+
+    // Name: the image's name, plus what was burned in ("_LogC4-Rec709", or the LUT's name).
+    QSettings settings;
+    const ColorTransform::View shown = ColorTransform::resolveView(m_view, m_currentSourceImage);
+    QString tag;
+    switch (shown) {
+    case ColorTransform::View::LogC3ToRec709:
+        tag = QStringLiteral("_LogC3-Rec709");
+        break;
+    case ColorTransform::View::LogC4ToRec709:
+        tag = QStringLiteral("_LogC4-Rec709");
+        break;
+    case ColorTransform::View::CustomLut:
+        tag = QLatin1Char('_') + QFileInfo(ColorTransform::lutFilePath()).completeBaseName();
+        break;
+    default:
+        break;
+    }
+    const QFileInfo source(m_currentImagePath);
+    QString folder = settings.value(SettingsExportFolder).toString();
+    if (folder.isEmpty() || !QFileInfo(folder).isDir()) {
+        folder = source.absolutePath();
+    }
+    const QString lastFormat = settings.value(SettingsExportFormat, QStringLiteral("png")).toString();
+    QString selectedFilter = filters.value(0);
+    QString suffix = formats.value(0).suffix;
+    for (int i = 0; i < formats.size(); ++i) {
+        if (formats.at(i).suffix == lastFormat) {
+            selectedFilter = filters.at(i);
+            suffix = lastFormat;
+        }
+    }
+    const QString suggested = QDir(folder).filePath(source.completeBaseName() + tag + QLatin1Char('.') + suffix);
+
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Export As"), suggested,
+                                                filters.join(QStringLiteral(";;")), &selectedFilter);
+    if (path.isEmpty()) {
+        return;
+    }
+
+    // The format follows the chosen filter; add its extension if the name has none of ours.
+    const Format *format = &formats.first();
+    for (int i = 0; i < formats.size(); ++i) {
+        if (filters.at(i) == selectedFilter) {
+            format = &formats.at(i);
+        }
+    }
+    const QString typedSuffix = QFileInfo(path).suffix().toLower();
+    for (const Format &candidate : formats) {
+        if (typedSuffix == candidate.suffix || (candidate.suffix == QStringLiteral("jpg") && typedSuffix == QStringLiteral("jpeg"))
+            || (candidate.suffix == QStringLiteral("tif") && typedSuffix == QStringLiteral("tiff"))) {
+            format = &candidate;
+        }
+    }
+    if (typedSuffix.isEmpty() || QFileInfo(path).suffix().compare(format->suffix, Qt::CaseInsensitive) != 0) {
+        const bool known = std::any_of(formats.cbegin(), formats.cend(), [&](const Format &f) {
+            return typedSuffix == f.suffix || typedSuffix == QStringLiteral("jpeg") || typedSuffix == QStringLiteral("tiff");
+        });
+        if (!known) {
+            path += QLatin1Char('.') + format->suffix;
+        }
+    }
+
+    QImageWriter writer(path, format->writer);
+    if (format->writer == "jpeg" || format->writer == "webp") {
+        writer.setQuality(95);
+    }
+    if (format->writer == "tiff") {
+        writer.setCompression(1); // LZW: lossless and much smaller than uncompressed
+    }
+    QImage image = m_currentDisplayImage;
+    if (format->writer == "jpeg" || format->writer == "bmp") {
+        image = image.convertToFormat(QImage::Format_RGB888); // no alpha in these
+    }
+    if (!writer.write(image)) {
+        QMessageBox::warning(this, QStringLiteral("Export As"),
+                             QStringLiteral("Could not save %1:\n%2").arg(QDir::toNativeSeparators(path), writer.errorString()));
+        return;
+    }
+    settings.setValue(SettingsExportFolder, QFileInfo(path).absolutePath());
+    settings.setValue(SettingsExportFormat, format->suffix);
+    statusBar()->showMessage(QStringLiteral("Exported %1").arg(QDir::toNativeSeparators(path)), 5000);
 }
 
 void MainWindow::copyImageToClipboard()

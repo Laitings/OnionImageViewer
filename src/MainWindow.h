@@ -116,6 +116,7 @@ private:
     void setChannel(int channel, bool toggle);
     void setFullScreenMode(bool on);
     void copyImageToClipboard();
+    void exportImageAs();
     void copyPathToClipboard(const QString &path);
     void showInExplorer(const QString &path);
     void showGridContextMenu(const QPoint &pos);
@@ -138,6 +139,7 @@ private:
     QAction *m_clippingAction = nullptr;
     QAction *m_fullScreenAction = nullptr;
     QAction *m_copyImageAction = nullptr;
+    QAction *m_exportAction = nullptr;
     QAction *m_copyPathAction = nullptr;
     QAction *m_showInExplorerAction = nullptr;
     QList<QWidget *> m_hiddenForFullScreen;
