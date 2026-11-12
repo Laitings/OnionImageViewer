@@ -52,6 +52,8 @@ private:
     void setViewTransform(ColorTransform::View view);
     void updateViewTransformActions();
     void chooseLutFile();
+    void chooseArriLutFolder();
+    void findArriLuts();
     void showAbout();
     void updateColorButton(ColorTransform::View view);
     void setInput(ColorTransform::Input input);
@@ -94,6 +96,7 @@ private:
     QActionGroup *m_viewTransformGroup = nullptr;
     QAction *m_customLutAction = nullptr;
     QAction *m_loadLutAction = nullptr;
+    QAction *m_arriLutFolderAction = nullptr;
     QMenu *m_recentLutsMenu = nullptr;
     QMenu *m_colorMenu = nullptr;
     QToolButton *m_colorButton = nullptr;

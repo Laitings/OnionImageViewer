@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <QString>
+#include <QStringList>
 
 // Display ("view") transforms. Readers hand over images at full precision with their stored
 // values untouched (DPX as 16-bit code values, EXR as half floats); toDisplay() turns them into
@@ -10,8 +11,8 @@ namespace ColorTransform {
 
 enum class View {
     None,          // as stored: EXR (scene-linear) gets the sRGB curve, everything else unchanged
-    LogC3ToRec709, // ARRI LogC3 (EI 800) / ALEXA Wide Gamut 3, built-in approximation
-    LogC4ToRec709, // ARRI LogC4 / ALEXA Wide Gamut 4, built-in approximation
+    LogC3ToRec709, // ARRI LogC3 (EI 800) / AWG3: ARRI's LUT when found, else an approximation
+    LogC4ToRec709, // ARRI LogC4 / AWG4: ARRI's LUT when found, else an approximation
     CustomLut,     // a .cube LUT file loaded with loadLut()
 };
 
@@ -41,6 +42,12 @@ QString cacheKey(View view);
 bool loadLut(const QString &filePath, QString *error = nullptr);
 bool hasLut();
 QString lutFilePath();
+
+// Looks for ARRI's LogC3/LogC4 -> Rec.709 (Gamma 2.4) .cube files in the folders (searched in
+// order, with subfolders) and makes the built-in LogC3/LogC4 views use them. Without them the
+// views fall back to an approximation. Returns how many of the two were found.
+int findArriLuts(const QStringList &folders);
+QString arriLutFilePath(View view);
 
 QString inputDisplayName(Input input);
 QString inputSettingsKey(Input input);

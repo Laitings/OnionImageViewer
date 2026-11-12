@@ -2,10 +2,13 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFloat16>
 #include <QList>
+#include <QStringList>
 #include <QtMath>
 
 #include <array>
@@ -144,38 +147,49 @@ float srgbEncode(float linear)
     return linear <= 0.0031308f ? linear * 12.92f : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
 }
 
-// Built-in display renderings. Neither is ARRI's own LUT; they are curves fitted to how ARRI's
-// Rec.709 LUTs render a grey scale and a few reference colours (load the real .cube for an
-// exact match).
+// Built-in display renderings, used when ARRI's own LUTs are not available. Each is a smooth
+// curve on the camera's log code value (two blended logistic steps, normalised to 0..1) fitted to
+// the neutral axis of ARRI's v1 "Gamma24_Rec709" LUTs; the output is display-encoded (gamma 2.4)
+// like those LUTs. Colours are not modelled exactly: ARRI's gamut mapping is more involved.
+struct ToneCurve
+{
+    float k1, t1, g, k2, t2, w;
+};
 
-// LogC3: a smooth S-curve, display gamma 2.4 like ARRI's "Gamma24_Rec709" LUTs.
+float toneCurve(const ToneCurve &p, float code)
+{
+    auto raw = [&p](float t) {
+        return p.w * std::pow(1.0f + std::exp(-p.k1 * (t - p.t1)), -p.g)
+            + (1.0f - p.w) / (1.0f + std::exp(-p.k2 * (t - p.t2)));
+    };
+    const float low = raw(0.0f);
+    const float high = raw(1.0f);
+    return qBound(0.0f, (raw(code) - low) / (high - low), 1.0f);
+}
+
+constexpr ToneCurve LogC3Curve = {8.225126f, 0.2402257f, 2.3298827f, 14.5402211f, 0.5827083f, 0.6954402f};
+constexpr ToneCurve LogC4Curve = {9.7833035f, 0.2651433f, 2.6555779f, 25.6883184f, 0.1928446f, 0.6973401f};
+
 float logC3Tone(float linear)
 {
-    constexpr float a = 0.9264194f;
-    constexpr float b = 0.8616298f;
-    constexpr float c = 1.2984306f;
-    const float x = std::pow(qMax(0.0f, linear), c);
-    return std::pow(qBound(0.0f, a * x / (x + b), 1.0f), 1.0f / 2.4f);
+    return toneCurve(LogC3Curve, linearToLogC3(qMax(0.0f, linear)));
 }
 
-// LogC4: Narkowicz's ACES fit, with a little black lift so shadows don't crush.
 float logC4Tone(float linear)
 {
-    const float x = qMax(0.0f, linear) * 0.6f;
-    const float filmic = qBound(0.0f, (x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f), 1.0f);
-    constexpr float lift = 0.0025f;
-    return srgbEncode(lift + filmic * (1.0f - lift));
+    return toneCurve(LogC4Curve, linearToLogC4(qMax(0.0f, linear)));
 }
 
-constexpr int OutputLutRange = 16; // linear values above this clip
-constexpr int OutputLutSteps = 4096;
-constexpr int OutputLutSize = OutputLutRange * OutputLutSteps + 1;
+// The output table is indexed by sqrt(linear / range): fine steps in the shadows, and enough
+// range for camera highlights (LogC4 reaches about 470 linear).
+constexpr float OutputLutRange = 1024.0f; // linear values above this clip
+constexpr int OutputLutSize = 65536;
 
 struct Tables
 {
     std::vector<float> decode16;   // 16-bit integer code value -> linear
     std::vector<float> decodeHalf; // half-float bit pattern -> linear
-    std::vector<uchar> output;     // linear (0..OutputLutRange) -> 8-bit display value
+    std::vector<uchar> output;     // sqrt(linear / OutputLutRange) -> 8-bit display value
     Matrix matrix = Identity;
     float saturation = 1.0f;
 };
@@ -197,13 +211,13 @@ std::shared_ptr<const Tables> buildTables(View view)
         decode = logC3ToLinear;
         tone = logC3Tone;
         tables->matrix = Awg3ToRec709;
-        tables->saturation = 0.85f;
+        tables->saturation = 0.9f;
         break;
     case View::LogC4ToRec709:
         decode = logC4ToLinear;
         tone = logC4Tone;
         tables->matrix = Awg4ToRec709;
-        tables->saturation = 0.92f;
+        tables->saturation = 0.9f;
         break;
     case View::None:
     case View::CustomLut:
@@ -221,7 +235,8 @@ std::shared_ptr<const Tables> buildTables(View view)
 
     tables->output.resize(OutputLutSize);
     for (int i = 0; i < OutputLutSize; ++i) {
-        const float linear = static_cast<float>(i) / OutputLutSteps;
+        const float position = static_cast<float>(i) / (OutputLutSize - 1);
+        const float linear = position * position * OutputLutRange;
         tables->output[i] = static_cast<uchar>(qBound(0, qRound(tone(linear) * 255.0f), 255));
     }
     return tables;
@@ -244,7 +259,10 @@ inline uchar outputValue(const Tables &tables, float linear)
     if (!(linear > 0.0f)) {
         return tables.output[0];
     }
-    const int index = linear >= OutputLutRange ? OutputLutSize - 1 : static_cast<int>(linear * OutputLutSteps + 0.5f);
+    if (linear >= OutputLutRange) {
+        return tables.output[OutputLutSize - 1];
+    }
+    const int index = static_cast<int>(std::sqrt(linear * (1.0f / OutputLutRange)) * (OutputLutSize - 1) + 0.5f);
     return tables.output[static_cast<size_t>(qMin(index, OutputLutSize - 1))];
 }
 
@@ -265,13 +283,39 @@ struct CubeLut
     std::vector<float> coordHalf[3];
 };
 
-std::mutex lutMutex;
-std::shared_ptr<const CubeLut> currentLut;
+// Loaded LUTs: the user's custom LUT, and ARRI's own LogC3/LogC4 -> Rec.709 LUTs, which the
+// built-in views use when they are found.
+enum LutSlot { CustomSlot, ArriLogC3Slot, ArriLogC4Slot, LutSlotCount };
 
-std::shared_ptr<const CubeLut> lutSnapshot()
+std::mutex lutMutex;
+std::shared_ptr<const CubeLut> loadedLuts[LutSlotCount];
+
+std::shared_ptr<const CubeLut> lutSnapshot(LutSlot slot = CustomSlot)
 {
     std::lock_guard<std::mutex> lock(lutMutex);
-    return currentLut;
+    return loadedLuts[slot];
+}
+
+void storeLut(LutSlot slot, std::shared_ptr<const CubeLut> lut)
+{
+    std::lock_guard<std::mutex> lock(lutMutex);
+    loadedLuts[slot] = std::move(lut);
+}
+
+// The LUT a view renders through, if any.
+std::shared_ptr<const CubeLut> lutForView(View view)
+{
+    switch (view) {
+    case View::CustomLut:
+        return lutSnapshot(CustomSlot);
+    case View::LogC3ToRec709:
+        return lutSnapshot(ArriLogC3Slot);
+    case View::LogC4ToRec709:
+        return lutSnapshot(ArriLogC4Slot);
+    case View::None:
+        break;
+    }
+    return nullptr;
 }
 
 bool parseFloats(const QList<QByteArray> &parts, int first, int count, float *out)
@@ -603,9 +647,11 @@ QString displayName(View view)
 {
     switch (view) {
     case View::LogC3ToRec709:
-        return QStringLiteral("ARRI LogC3 → Rec.709 (built-in)");
+        return arriLutFilePath(view).isEmpty() ? QStringLiteral("ARRI LogC3 → Rec.709 (approx.)")
+                                                : QStringLiteral("ARRI LogC3 → Rec.709");
     case View::LogC4ToRec709:
-        return QStringLiteral("ARRI LogC4 → Rec.709 (built-in)");
+        return arriLutFilePath(view).isEmpty() ? QStringLiteral("ARRI LogC4 → Rec.709 (approx.)")
+                                                : QStringLiteral("ARRI LogC4 → Rec.709");
     case View::CustomLut: {
         const QString path = lutFilePath();
         return path.isEmpty() ? QStringLiteral("LUT file")
@@ -644,12 +690,14 @@ View fromSettingsKey(const QString &key)
 
 QString cacheKey(View view)
 {
-    // "v2": the built-in curves changed after the first release of this feature.
-    if (view == View::CustomLut) {
-        const auto lut = lutSnapshot();
-        return QStringLiteral("lut|") + (lut ? lut->identity : QString());
+    // The suffix changes whenever the built-in curves change, so old thumbnails are remade.
+    if (const auto lut = lutForView(view)) {
+        return settingsKey(view) + QStringLiteral("|lut|") + lut->identity;
     }
-    return settingsKey(view) + QStringLiteral("|v2");
+    if (view == View::CustomLut) {
+        return QStringLiteral("lut|");
+    }
+    return settingsKey(view) + QStringLiteral("|v3");
 }
 
 QString inputDisplayName(Input input)
@@ -720,19 +768,70 @@ bool loadLut(const QString &filePath, QString *error)
     if (!lut) {
         return false;
     }
-    std::lock_guard<std::mutex> lock(lutMutex);
-    currentLut = std::move(lut);
+    storeLut(CustomSlot, std::move(lut));
     return true;
+}
+
+int findArriLuts(const QStringList &folders)
+{
+    // ARRI's file names, e.g. "ARRI_LogC4-to-Gamma24_Rec709-D65_v1-33.cube". Prefer the
+    // standard (not "Classic") look, final over beta, and the 33-point version.
+    auto score = [](const QString &name) {
+        int value = 0;
+        if (!name.contains(QStringLiteral("classic"), Qt::CaseInsensitive)) value += 8;
+        if (!name.contains(QStringLiteral("beta"), Qt::CaseInsensitive)) value += 4;
+        if (name.contains(QStringLiteral("-33"))) value += 2;
+        return value;
+    };
+    const QString patterns[2] = {QStringLiteral("logc3-to-gamma24_rec709"), QStringLiteral("logc4-to-gamma24_rec709")};
+    const LutSlot arriSlots[2] = {ArriLogC3Slot, ArriLogC4Slot};
+    QString best[2];
+    int bestScore[2] = {-1, -1};
+    for (const QString &folder : folders) {
+        if (folder.isEmpty() || !QFileInfo(folder).isDir()) {
+            continue;
+        }
+        QDirIterator it(folder, {QStringLiteral("*.cube")}, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            const QString name = it.fileName();
+            for (int i = 0; i < 2; ++i) {
+                if (name.contains(patterns[i], Qt::CaseInsensitive) && score(name) > bestScore[i]) {
+                    best[i] = path;
+                    bestScore[i] = score(name);
+                }
+            }
+        }
+        if (!best[0].isEmpty() && !best[1].isEmpty()) {
+            break; // earlier folders win
+        }
+    }
+    int found = 0;
+    for (int i = 0; i < 2; ++i) {
+        std::shared_ptr<CubeLut> lut = best[i].isEmpty() ? nullptr : parseCube(best[i], nullptr);
+        found += lut ? 1 : 0;
+        storeLut(arriSlots[i], std::move(lut));
+    }
+    return found;
+}
+
+QString arriLutFilePath(View view)
+{
+    if (view != View::LogC3ToRec709 && view != View::LogC4ToRec709) {
+        return QString();
+    }
+    const auto lut = lutForView(view);
+    return lut ? lut->filePath : QString();
 }
 
 bool hasLut()
 {
-    return lutSnapshot() != nullptr;
+    return lutSnapshot(CustomSlot) != nullptr;
 }
 
 QString lutFilePath()
 {
-    const auto lut = lutSnapshot();
+    const auto lut = lutSnapshot(CustomSlot);
     return lut ? lut->filePath : QString();
 }
 
@@ -743,12 +842,9 @@ QImage toDisplay(const QImage &source, View view, Input inputSpace)
     }
 
     const bool floatSource = isFloatFormat(source.format());
-    std::shared_ptr<const CubeLut> lut;
-    if (view == View::CustomLut) {
-        lut = lutSnapshot();
-        if (!lut) {
-            view = View::None;
-        }
+    std::shared_ptr<const CubeLut> lut = lutForView(view);
+    if (view == View::CustomLut && !lut) {
+        view = View::None;
     }
 
     const Input resolved = resolveInput(inputSpace, source);

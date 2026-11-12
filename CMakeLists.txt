@@ -72,6 +72,24 @@ if(WIN32)
     target_sources(OnionImageViewer PRIVATE resources/OnionImageViewer.rc)
 endif()
 
+# ARRI's LogC3/LogC4 -> Rec.709 LUTs are not in the repository (they are ARRI's files). Point
+# ONION_ARRI_LUT_DIR at a folder holding ARRI's LUT packages and they are copied to luts/ next to
+# the .exe, where the ARRI views pick them up:
+#   cmake -B build-msvc -DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri
+set(ONION_ARRI_LUT_DIR "" CACHE PATH "Folder with ARRI LogC3/LogC4 to Rec.709 .cube files to copy next to the .exe")
+if(ONION_ARRI_LUT_DIR)
+    file(GLOB_RECURSE ONION_ARRI_LUTS
+        "${ONION_ARRI_LUT_DIR}/*LogC3-to-Gamma24_Rec709*.cube"
+        "${ONION_ARRI_LUT_DIR}/*LogC4-to-Gamma24_Rec709*.cube")
+    if(ONION_ARRI_LUTS)
+        file(COPY ${ONION_ARRI_LUTS} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/luts")
+        list(LENGTH ONION_ARRI_LUTS ONION_ARRI_LUT_COUNT)
+        message(STATUS "Copied ${ONION_ARRI_LUT_COUNT} ARRI LUT(s) to luts/")
+    else()
+        message(WARNING "No ARRI LogC3/LogC4 Rec709 .cube files found in ${ONION_ARRI_LUT_DIR}")
+    endif()
+endif()
+
 # EXR support is optional: without OpenEXR the viewer still builds, just without .exr files.
 find_package(OpenEXR CONFIG QUIET)
 if(OpenEXR_FOUND)
