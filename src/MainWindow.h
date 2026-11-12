@@ -51,6 +51,7 @@ private:
     void setViewTransform(ColorTransform::View view);
     void updateViewTransformActions();
     void chooseLutFile();
+    void showAbout();
     void setInput(ColorTransform::Input input);
     void updateInputActions();
     void useLutFile(const QString &filePath);

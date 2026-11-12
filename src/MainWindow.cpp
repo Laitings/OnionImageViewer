@@ -473,6 +473,22 @@ void MainWindow::createMenus()
     QMenu *inputMenu = colorMenu->addMenu(QStringLiteral("EXR Input"));
     inputMenu->setToolTipsVisible(true);
     inputMenu->addActions(m_inputGroup->actions());
+
+    QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("Help"));
+    helpMenu->addAction(QStringLiteral("About OnionImageViewer"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::showAbout()
+{
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("About OnionImageViewer"));
+    box.setIconPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral("<h3>OnionImageViewer</h3>"
+                               "<p>Image viewer and batch converter.</p>"
+                               "<p>Built with Qt %1.</p>")
+                    .arg(QString::fromLatin1(qVersion())));
+    box.exec();
 }
 
 void MainWindow::createToolbar()
