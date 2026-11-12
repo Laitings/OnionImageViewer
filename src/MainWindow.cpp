@@ -46,6 +46,7 @@
 #include <QThreadPool>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #ifdef Q_OS_WIN
@@ -463,8 +464,10 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_fitToWindowAction);
     viewMenu->addAction(m_actualSizeAction);
-    viewMenu->addSeparator();
-    QMenu *colorMenu = viewMenu->addMenu(QStringLiteral("Color"));
+
+    // Color has its own top-level menu (also opened from the toolbar's Color button).
+    QMenu *colorMenu = menuBar()->addMenu(QStringLiteral("Color"));
+    m_colorMenu = colorMenu;
     colorMenu->addActions(m_viewTransformGroup->actions());
     colorMenu->addSeparator();
     colorMenu->addAction(m_loadLutAction);
@@ -503,6 +506,23 @@ void MainWindow::createToolbar()
     toolbar->addAction(m_openImageAction);
     toolbar->addAction(m_fitToWindowAction);
     toolbar->addAction(m_actualSizeAction);
+    toolbar->addSeparator();
+
+    // Shows the current view transform; click to pick another (same menu as Color in the menu bar).
+    m_colorButton = new QToolButton(toolbar);
+    m_colorButton->setMenu(m_colorMenu);
+    m_colorButton->setPopupMode(QToolButton::InstantPopup);
+    m_colorButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_colorButton->setToolTip(QStringLiteral("View transform / LUT"));
+    toolbar->addWidget(m_colorButton);
+    updateColorButton();
+}
+
+void MainWindow::updateColorButton()
+{
+    if (m_colorButton) {
+        m_colorButton->setText(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)));
+    }
 }
 
 void MainWindow::createCentralLayout()
@@ -789,6 +809,7 @@ void MainWindow::useLutFile(const QString &filePath)
 void MainWindow::updateLutActions()
 {
     m_customLutAction->setText(ColorTransform::displayName(ColorTransform::View::CustomLut));
+    updateColorButton();
 
     m_recentLutsMenu->clear();
     const QStringList recent = QSettings().value(SettingsRecentLuts).toStringList();
@@ -809,6 +830,7 @@ void MainWindow::updateViewTransformActions()
 
 void MainWindow::updateViewTransformActions(ColorTransform::View view)
 {
+    updateColorButton();
     for (QAction *action : m_viewTransformGroup->actions()) {
         action->setChecked(action->data().toInt() == static_cast<int>(view));
     }
