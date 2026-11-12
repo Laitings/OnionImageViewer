@@ -1,10 +1,24 @@
 cmake_minimum_required(VERSION 3.21)
 
-# Use vcpkg (it ships with Visual Studio) for OpenEXR when it's available and no toolchain was
-# chosen. Must come before project(). A build folder configured without it has to be recreated.
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT}
-        AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg toolchain")
+# Use vcpkg for OpenEXR when it's available and no toolchain was chosen: VCPKG_ROOT if set,
+# otherwise the copy that ships with Visual Studio (VSINSTALLDIR is set by the developer prompt).
+# This must come before project(). A build folder configured without it has to be recreated.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(ONION_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+    elseif(DEFINED ENV{VSINSTALLDIR} AND EXISTS "$ENV{VSINSTALLDIR}/VC/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(ONION_VCPKG_ROOT "$ENV{VSINSTALLDIR}/VC/vcpkg")
+    endif()
+    if(ONION_VCPKG_ROOT)
+        file(TO_CMAKE_PATH "${ONION_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" ONION_VCPKG_TOOLCHAIN)
+        set(CMAKE_TOOLCHAIN_FILE "${ONION_VCPKG_TOOLCHAIN}" CACHE STRING "vcpkg toolchain")
+    endif()
+endif()
+
+# Link vcpkg libraries statically (with the same /MD runtime as Qt), so no extra DLLs have to be
+# shipped next to the .exe.
+if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
+    set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "vcpkg triplet")
 endif()
 
 project(OnionImageViewer

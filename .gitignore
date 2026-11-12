@@ -44,3 +44,4 @@ MinSizeRel/
 *.ilk
 *.obj
 *.lib
+vcpkg_installed/
