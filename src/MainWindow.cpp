@@ -62,6 +62,9 @@ const QString SettingsMainWindowGeometry = QStringLiteral("mainWindow/geometry")
 const QString SettingsMainWindowState = QStringLiteral("mainWindow/state");
 const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
 const QString SettingsViewTransform = QStringLiteral("view/colorTransform");
+const QString SettingsLutFile = QStringLiteral("view/lutFile");
+const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
+const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
 const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
@@ -107,7 +110,7 @@ QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view)
         + QStringLiteral("|")
         + QString::number(fileInfo.lastModified().toMSecsSinceEpoch());
     if (view != ColorTransform::View::None) {
-        cacheKeySource += QStringLiteral("|") + ColorTransform::settingsKey(view);
+        cacheKeySource += QStringLiteral("|") + ColorTransform::cacheKey(view);
     }
 
     const QByteArray cacheKey = QCryptographicHash::hash(cacheKeySource.toUtf8(), QCryptographicHash::Sha256).toHex();
@@ -407,6 +410,7 @@ void MainWindow::createActions()
         {ColorTransform::View::None, QKeySequence(Qt::CTRL | Qt::Key_0)},
         {ColorTransform::View::LogC3ToRec709, QKeySequence(Qt::CTRL | Qt::Key_3)},
         {ColorTransform::View::LogC4ToRec709, QKeySequence(Qt::CTRL | Qt::Key_4)},
+        {ColorTransform::View::CustomLut, QKeySequence(Qt::CTRL | Qt::Key_L)},
     };
     for (const auto &entry : transforms) {
         auto *action = new QAction(ColorTransform::displayName(entry.view), m_viewTransformGroup);
@@ -416,7 +420,14 @@ void MainWindow::createActions()
         connect(action, &QAction::triggered, this, [this, view = entry.view]() {
             setViewTransform(view);
         });
+        if (entry.view == ColorTransform::View::CustomLut) {
+            m_customLutAction = action;
+        }
     }
+
+    m_loadLutAction = new QAction(QStringLiteral("Load LUT File…"), this);
+    m_loadLutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
+    connect(m_loadLutAction, &QAction::triggered, this, &MainWindow::chooseLutFile);
 }
 
 void MainWindow::createMenus()
@@ -436,6 +447,9 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     QMenu *colorMenu = viewMenu->addMenu(QStringLiteral("Color"));
     colorMenu->addActions(m_viewTransformGroup->actions());
+    colorMenu->addSeparator();
+    colorMenu->addAction(m_loadLutAction);
+    m_recentLutsMenu = colorMenu->addMenu(QStringLiteral("Recent LUTs"));
 }
 
 void MainWindow::createToolbar()
@@ -570,7 +584,18 @@ void MainWindow::loadSettings()
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
 
+    const QString lutFile = settings.value(SettingsLutFile).toString();
+    if (!lutFile.isEmpty()) {
+        QString error;
+        if (!ColorTransform::loadLut(lutFile, &error)) {
+            statusBar()->showMessage(QStringLiteral("Could not load LUT %1: %2").arg(lutFile, error), 8000);
+        }
+    }
     m_view = ColorTransform::fromSettingsKey(settings.value(SettingsViewTransform).toString());
+    if (m_view == ColorTransform::View::CustomLut && !ColorTransform::hasLut()) {
+        m_view = ColorTransform::View::None;
+    }
+    updateLutActions();
     updateViewTransformActions();
 }
 
@@ -635,6 +660,11 @@ void MainWindow::openImagePath(const QString &filePath)
 
 void MainWindow::setViewTransform(ColorTransform::View view)
 {
+    if (view == ColorTransform::View::CustomLut && !ColorTransform::hasLut()) {
+        updateViewTransformActions(m_view);
+        chooseLutFile();
+        return;
+    }
     updateViewTransformActions(view);
     if (view == m_view) {
         return;
@@ -648,6 +678,68 @@ void MainWindow::setViewTransform(ColorTransform::View view)
         m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view), true);
     }
     resetThumbnails();
+}
+
+void MainWindow::chooseLutFile()
+{
+    QString directory = QFileInfo(ColorTransform::lutFilePath()).absolutePath();
+    if (ColorTransform::lutFilePath().isEmpty()) {
+        directory = m_currentFolderPath;
+    }
+    const QString filePath = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Load LUT"), directory, QStringLiteral("Cube LUTs (*.cube);;All files (*)"));
+    if (!filePath.isEmpty()) {
+        useLutFile(filePath);
+    }
+}
+
+// Loads a .cube file and switches the view to it.
+void MainWindow::useLutFile(const QString &filePath)
+{
+    QString error;
+    if (!ColorTransform::loadLut(filePath, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Load LUT"),
+                             QStringLiteral("Could not load %1:\n%2").arg(QDir::toNativeSeparators(filePath), error));
+        return;
+    }
+
+    QSettings settings;
+    settings.setValue(SettingsLutFile, filePath);
+    QStringList recent = settings.value(SettingsRecentLuts).toStringList();
+    recent.removeAll(filePath);
+    recent.prepend(filePath);
+    while (recent.size() > MaxRecentLuts) {
+        recent.removeLast();
+    }
+    settings.setValue(SettingsRecentLuts, recent);
+    updateLutActions();
+
+    if (m_view == ColorTransform::View::CustomLut) {
+        // Same view, new LUT: re-render explicitly.
+        statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)), 3000);
+        if (!m_currentSourceImage.isNull()) {
+            m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view), true);
+        }
+        resetThumbnails();
+    } else {
+        setViewTransform(ColorTransform::View::CustomLut);
+    }
+}
+
+void MainWindow::updateLutActions()
+{
+    m_customLutAction->setText(ColorTransform::displayName(ColorTransform::View::CustomLut));
+
+    m_recentLutsMenu->clear();
+    const QStringList recent = QSettings().value(SettingsRecentLuts).toStringList();
+    for (const QString &filePath : recent) {
+        QAction *action = m_recentLutsMenu->addAction(QFileInfo(filePath).completeBaseName());
+        action->setToolTip(QDir::toNativeSeparators(filePath));
+        connect(action, &QAction::triggered, this, [this, filePath]() {
+            useLutFile(filePath);
+        });
+    }
+    m_recentLutsMenu->setEnabled(!recent.isEmpty());
 }
 
 void MainWindow::updateViewTransformActions()

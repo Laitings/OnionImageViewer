@@ -20,6 +20,7 @@ class QIcon;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QMenu;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
@@ -49,6 +50,9 @@ private:
     void setFolderPanelVisible(bool visible);
     void setViewTransform(ColorTransform::View view);
     void updateViewTransformActions();
+    void chooseLutFile();
+    void useLutFile(const QString &filePath);
+    void updateLutActions();
     void updateViewTransformActions(ColorTransform::View view);
     void resetThumbnails();
     void handleFolderSelected(const QString &folderPath);
@@ -83,6 +87,9 @@ private:
     QAction *m_fitToWindowAction = nullptr;
     QAction *m_actualSizeAction = nullptr;
     QActionGroup *m_viewTransformGroup = nullptr;
+    QAction *m_customLutAction = nullptr;
+    QAction *m_loadLutAction = nullptr;
+    QMenu *m_recentLutsMenu = nullptr;
     ColorTransform::View m_view = ColorTransform::View::None;
     QImage m_currentSourceImage;
     QString m_currentFolderPath;
