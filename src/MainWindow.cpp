@@ -860,7 +860,15 @@ void MainWindow::createCentralLayout()
     m_pixelLabel->setStyleSheet(QStringLiteral("font-family: Consolas, 'DejaVu Sans Mono', monospace;"));
     statusBar()->addPermanentWidget(m_infoLabel, 1);
     statusBar()->addPermanentWidget(m_pixelLabel);
+    // The displayed color under the mouse, as a small square right of the numbers.
+    m_swatchLabel = new QLabel(this);
+    m_swatchLabel->setFixedSize(14, 14);
+    m_swatchLabel->setToolTip(QStringLiteral("Color under the mouse. Right-click the image to copy it."));
+    m_swatchLabel->hide();
+    statusBar()->addPermanentWidget(m_swatchLabel);
     connect(m_imageViewport, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updatePixelReadout);
+    m_imageViewport->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_imageViewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewerContextMenu);
 
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
@@ -1315,9 +1323,13 @@ void MainWindow::updatePixelReadout(const QPoint &pixel)
     if (!isViewerVisible() || pixel.x() < 0 || m_currentSourceImage.isNull()
         || !m_currentDisplayImage.rect().contains(pixel)) {
         m_pixelLabel->clear();
+        m_swatchLabel->hide();
         return;
     }
     const QRgb shown = m_currentDisplayImage.pixel(pixel);
+    m_swatchLabel->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;")
+                                     .arg(QColor(shown).name()));
+    m_swatchLabel->show();
     m_pixelLabel->setText(QStringLiteral("x %1  y %2   stored %3   display %4 %5 %6")
                               .arg(pixel.x(), 4)
                               .arg(pixel.y(), 4)
@@ -1325,6 +1337,72 @@ void MainWindow::updatePixelReadout(const QPoint &pixel)
                               .arg(qRed(shown), 3)
                               .arg(qGreen(shown), 3)
                               .arg(qBlue(shown), 3));
+}
+
+// Right-click in the viewer: pick the color under the mouse (as shown, with the color view) in
+// the formats other programs take, plus the usual image actions.
+void MainWindow::showViewerContextMenu(const QPoint &pos)
+{
+    QMenu menu(this);
+    const QPoint pixel = m_imageViewport->imagePixelAt(QPointF(pos));
+    if (pixel.x() >= 0 && m_currentDisplayImage.rect().contains(pixel)) {
+        const QColor color(m_currentDisplayImage.pixel(pixel));
+        QPixmap swatch(16, 16);
+        swatch.fill(color);
+        const QString hex = color.name(QColor::HexRgb).toUpper();
+        QAction *pick = menu.addAction(QIcon(swatch), QStringLiteral("Pick Color\t%1").arg(hex));
+        pick->setToolTip(QStringLiteral("Copy the color as hex, for Photoshop, Resolve, web colors and so on"));
+        connect(pick, &QAction::triggered, this, [this, hex, color]() {
+            copyColorText(hex, color);
+        });
+
+        QMenu *formats = menu.addMenu(QStringLiteral("Copy Color As"));
+        const QString rgb255 = QStringLiteral("%1, %2, %3").arg(color.red()).arg(color.green()).arg(color.blue());
+        const QString rgb01 = QStringLiteral("%1, %2, %3")
+                                  .arg(color.redF(), 0, 'f', 4)
+                                  .arg(color.greenF(), 0, 'f', 4)
+                                  .arg(color.blueF(), 0, 'f', 4);
+        const QString stored = storedPixelText(m_currentSourceImage, pixel).simplified();
+        const struct {
+            QString label;
+            QString text;
+        } entries[] = {
+            {QStringLiteral("Hex"), hex},
+            {QStringLiteral("Hex without #"), hex.mid(1)},
+            {QStringLiteral("RGB 0–255"), rgb255},
+            {QStringLiteral("RGB 0–1"), rgb01},
+            {QStringLiteral("Stored value"), stored},
+        };
+        for (const auto &entry : entries) {
+            if (entry.text.isEmpty()) {
+                continue;
+            }
+            const QString text = entry.text;
+            formats->addAction(QStringLiteral("%1\t%2").arg(entry.label, text), this, [this, text, color]() {
+                copyColorText(text, color);
+            });
+        }
+        menu.addSeparator();
+    }
+    menu.addAction(m_copyImageAction);
+    menu.addAction(m_copyPathAction);
+    menu.addAction(m_showInExplorerAction);
+    menu.addSeparator();
+    menu.addAction(m_fitToWindowAction);
+    menu.addAction(m_actualSizeAction);
+    menu.addAction(m_pinAction);
+    menu.addAction(m_metadataAction);
+    menu.exec(m_imageViewport->mapToGlobal(pos));
+}
+
+void MainWindow::copyColorText(const QString &text, const QColor &color)
+{
+    // Plain text for most programs, plus the color itself for those that take it (e.g. Qt apps).
+    auto *mime = new QMimeData;
+    mime->setText(text);
+    mime->setColorData(color);
+    QApplication::clipboard()->setMimeData(mime);
+    statusBar()->showMessage(QStringLiteral("Copied %1").arg(text), 3000);
 }
 
 void MainWindow::handlePathActivated(const QString &path)
@@ -1893,6 +1971,7 @@ void MainWindow::showGrid()
     stopPlayback();
     m_contentStack->setCurrentWidget(m_fileGrid);
     m_pixelLabel->clear();
+    m_swatchLabel->hide();
     scheduleMetadata();
     updateImageInfo();
     updateColorButton(m_view);
