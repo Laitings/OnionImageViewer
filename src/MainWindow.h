@@ -21,6 +21,7 @@ class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QMenu;
+class QToolButton;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
@@ -52,6 +53,7 @@ private:
     void updateViewTransformActions();
     void chooseLutFile();
     void showAbout();
+    void updateColorButton();
     void setInput(ColorTransform::Input input);
     void updateInputActions();
     void useLutFile(const QString &filePath);
@@ -93,6 +95,8 @@ private:
     QAction *m_customLutAction = nullptr;
     QAction *m_loadLutAction = nullptr;
     QMenu *m_recentLutsMenu = nullptr;
+    QMenu *m_colorMenu = nullptr;
+    QToolButton *m_colorButton = nullptr;
     QActionGroup *m_inputGroup = nullptr;
     ColorTransform::Input m_input = ColorTransform::Input::Auto;
     ColorTransform::View m_view = ColorTransform::View::None;
