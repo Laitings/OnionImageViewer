@@ -2,6 +2,8 @@
 
 #include <QAbstractItemView>
 #include <QDir>
+#include <QFileIconProvider>
+#include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFrame>
 #include <QListWidget>
@@ -11,8 +13,88 @@
 #include <QVBoxLayout>
 #include <QtEnvironmentVariables>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace {
 const int FolderPathRole = Qt::UserRole;
+
+// The default Windows icon provider asks the shell for every drive icon each time the tree
+// repaints, and drive icons are never cached. With mapped network drives (or a disconnected
+// one) that means network round trips on the UI thread on every resize. This provider hands out
+// a few icons built once up front, so painting never touches the file system.
+class FastFolderIconProvider final : public QFileIconProvider
+{
+public:
+    FastFolderIconProvider()
+        : m_folderIcon(toStaticIcon(QFileIconProvider::icon(QFileIconProvider::Folder)))
+        , m_driveIcon(toStaticIcon(QFileIconProvider::icon(QFileIconProvider::Drive)))
+        , m_networkIcon(toStaticIcon(QFileIconProvider::icon(QFileIconProvider::Network)))
+    {
+        setOptions(QFileIconProvider::DontUseCustomDirectoryIcons);
+    }
+
+    QIcon icon(IconType type) const override
+    {
+        switch (type) {
+        case Drive:
+            return m_driveIcon;
+        case Network:
+            return m_networkIcon;
+        case Folder:
+            return m_folderIcon;
+        default:
+            return QFileIconProvider::icon(type);
+        }
+    }
+
+    QIcon icon(const QFileInfo &info) const override
+    {
+        if (info.isRoot()) {
+            return isNetworkDrive(info) ? m_networkIcon : m_driveIcon;
+        }
+        return m_folderIcon;
+    }
+
+private:
+    // Render the (possibly lazily loading) icon into plain pixmaps once, so later paints are free.
+    static QIcon toStaticIcon(const QIcon &source)
+    {
+        QIcon result;
+        for (int size : {16, 20, 24, 32, 48}) {
+            const QPixmap pixmap = source.pixmap(size);
+            if (!pixmap.isNull()) {
+                result.addPixmap(pixmap);
+            }
+        }
+        return result.isNull() ? source : result;
+    }
+
+    static bool isNetworkDrive(const QFileInfo &info)
+    {
+#ifdef Q_OS_WIN
+        // GetDriveType only looks at the local drive table, so it never waits on the network.
+        const QString root = QDir::toNativeSeparators(info.absoluteFilePath());
+        return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16())) == DRIVE_REMOTE;
+#else
+        Q_UNUSED(info)
+        return false;
+#endif
+    }
+
+    QIcon m_folderIcon;
+    QIcon m_driveIcon;
+    QIcon m_networkIcon;
+};
+
+QAbstractFileIconProvider *fastFolderIconProvider()
+{
+    // Lives for the whole program, because the model's background thread may still use it
+    // while the window is being torn down.
+    static FastFolderIconProvider provider;
+    return &provider;
+}
 }
 
 FolderTreePanel::FolderTreePanel(QWidget *parent)
@@ -21,6 +103,8 @@ FolderTreePanel::FolderTreePanel(QWidget *parent)
     , m_quickLocations(new QListWidget(this))
     , m_treeView(new QTreeView(this))
 {
+    m_model->setIconProvider(fastFolderIconProvider());
+    m_model->setOption(QFileSystemModel::DontUseCustomDirectoryIcons);
     m_model->setFilter(QDir::Dirs | QDir::Drives | QDir::NoDotAndDotDot);
     m_model->setRootPath(QString());
 
