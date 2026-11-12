@@ -118,6 +118,8 @@ private:
     void showGridContextMenu(const QPoint &pos);
     QString currentPath() const;
     void scheduleMetadata();
+    void addRecentImage(const QString &filePath);
+    void updateRecentImagesMenu();
     void loadMetadata();
 
     std::shared_ptr<ImageLoader> m_imageLoader;
@@ -173,6 +175,7 @@ private:
     QAction *m_loadLutAction = nullptr;
     QAction *m_arriLutFolderAction = nullptr;
     QMenu *m_recentLutsMenu = nullptr;
+    QMenu *m_recentImagesMenu = nullptr;
     QMenu *m_colorMenu = nullptr;
     QToolButton *m_colorButton = nullptr;
     QActionGroup *m_inputGroup = nullptr;

@@ -66,6 +66,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 #ifdef Q_OS_WIN
 #include <objbase.h>
 #include <shobjidl.h>
@@ -84,6 +86,8 @@ const QString SettingsInput = QStringLiteral("view/input");
 const QString SettingsLutFile = QStringLiteral("view/lutFile");
 const QString SettingsArriLutFolder = QStringLiteral("view/arriLutFolder");
 const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
+const QString SettingsRecentImages = QStringLiteral("file/recentImages");
+constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
 const int FilePathRole = Qt::UserRole;
@@ -650,6 +654,9 @@ void MainWindow::createMenus()
 {
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
     fileMenu->addAction(m_openImageAction);
+    m_recentImagesMenu = fileMenu->addMenu(QStringLiteral("Recent Images"));
+    m_recentImagesMenu->setToolTipsVisible(true);
+    updateRecentImagesMenu();
     fileMenu->addSeparator();
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
@@ -965,6 +972,7 @@ void MainWindow::openImagePath(const QString &filePath)
         index = m_currentImagePaths.size() - 1;
     }
 
+    addRecentImage(filePath);
     stopPlayback();
     m_freshOpen = true; // fit the first image; keep zoom and position while stepping after that
     m_displayedIndex = -1;
@@ -1631,6 +1639,75 @@ void MainWindow::useLutFile(const QString &filePath)
     } else {
         setViewTransform(ColorTransform::View::CustomLut);
     }
+}
+
+// Remembers an image the user opened (not every frame stepped through). A sequence takes one
+// place: opening another frame of it replaces the earlier entry.
+void MainWindow::addRecentImage(const QString &filePath)
+{
+    auto sequenceKey = [](const QString &path) {
+        const QFileInfo info(path);
+        const QString number = frameNumberOf(path);
+        QString name = info.fileName();
+        if (!number.isEmpty()) {
+            name.remove(name.lastIndexOf(number), number.size());
+        }
+        return QDir::cleanPath(info.absolutePath()).toLower() + QLatin1Char('/') + name.toLower();
+    };
+    const QString path = QDir::cleanPath(QFileInfo(filePath).absoluteFilePath());
+    const QString key = sequenceKey(path);
+
+    QSettings settings;
+    QStringList recent = settings.value(SettingsRecentImages).toStringList();
+    recent.erase(std::remove_if(recent.begin(), recent.end(),
+                                [&](const QString &entry) { return sequenceKey(entry) == key; }),
+                 recent.end());
+    recent.prepend(path);
+    while (recent.size() > MaxRecentImages) {
+        recent.removeLast();
+    }
+    settings.setValue(SettingsRecentImages, recent);
+    updateRecentImagesMenu();
+}
+
+void MainWindow::updateRecentImagesMenu()
+{
+    if (!m_recentImagesMenu) {
+        return;
+    }
+    m_recentImagesMenu->clear();
+    const QStringList recent = QSettings().value(SettingsRecentImages).toStringList();
+    int number = 1;
+    for (const QString &filePath : recent) {
+        // File name, with its folder on the right. Nothing here touches the disk: the files may
+        // be on network drives that are slow or offline.
+        const QFileInfo info(filePath);
+        const QString folder = QFileInfo(info.absolutePath()).fileName();
+        QString text = QStringLiteral("&%1  %2").arg(number % 10).arg(info.fileName().replace(QLatin1Char('&'), QStringLiteral("&&")));
+        if (!folder.isEmpty()) {
+            text += QLatin1Char('\t') + folder;
+        }
+        QAction *action = m_recentImagesMenu->addAction(text);
+        action->setToolTip(QDir::toNativeSeparators(filePath));
+        connect(action, &QAction::triggered, this, [this, filePath]() {
+            if (!QFileInfo::exists(filePath)) {
+                QMessageBox::warning(this, QStringLiteral("Recent Images"),
+                                     QStringLiteral("%1 can't be found. It may have been moved, or its drive isn't connected.")
+                                         .arg(QDir::toNativeSeparators(filePath)));
+                return;
+            }
+            handlePathActivated(filePath);
+        });
+        ++number;
+    }
+    if (!recent.isEmpty()) {
+        m_recentImagesMenu->addSeparator();
+        m_recentImagesMenu->addAction(QStringLiteral("Clear Recent Images"), this, [this]() {
+            QSettings().remove(SettingsRecentImages);
+            updateRecentImagesMenu();
+        });
+    }
+    m_recentImagesMenu->setEnabled(!recent.isEmpty());
 }
 
 void MainWindow::updateLutActions()
