@@ -1,5 +1,7 @@
 #include "ImageLoader.h"
 
+#include "DpxReader.h"
+
 #include <QImageReader>
 
 bool ImageLoader::Result::isValid() const
@@ -9,6 +11,12 @@ bool ImageLoader::Result::isValid() const
 
 ImageLoader::Result QtImageLoader::load(const QString &filePath) const
 {
+    if (Dpx::isDpxFile(filePath)) {
+        QString error;
+        QImage image = Dpx::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
     QImageReader reader(filePath);
     reader.setAutoTransform(true);
 

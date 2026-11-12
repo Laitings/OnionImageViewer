@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "DpxReader.h"
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
@@ -76,6 +77,7 @@ QStringList supportedImageSuffixes()
     for (const QByteArray &format : formats) {
         suffixes.append(QString::fromLatin1(format).toLower());
     }
+    suffixes.append(QStringLiteral("dpx"));
     suffixes.removeDuplicates();
     return suffixes;
 }
@@ -218,6 +220,11 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
 
 QImage readerThumbnailForImage(const QString &filePath)
 {
+    if (Dpx::isDpxFile(filePath)) {
+        const QImage image = Dpx::read(filePath);
+        return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
     QImageReader reader(filePath);
     reader.setAutoTransform(true);
 
@@ -521,7 +528,7 @@ void MainWindow::openImage()
         this,
         QStringLiteral("Open Image"),
         QString(),
-        QStringLiteral("Images (*.bmp *.gif *.jpg *.jpeg *.png *.pbm *.pgm *.ppm *.xbm *.xpm);;All Files (*.*)"));
+        QStringLiteral("Images (*.bmp *.dpx *.gif *.jpg *.jpeg *.png *.pbm *.pgm *.ppm *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
 
     if (filePath.isEmpty()) {
         return;

@@ -25,6 +25,8 @@ qt_add_executable(OnionImageViewer
     src/ImageViewport.cpp
     src/ImageLoader.h
     src/ImageLoader.cpp
+    src/DpxReader.h
+    src/DpxReader.cpp
 )
 
 target_link_libraries(OnionImageViewer
