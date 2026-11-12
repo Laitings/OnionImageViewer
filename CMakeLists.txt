@@ -52,6 +52,10 @@ qt_add_executable(OnionImageViewer
     src/ExrReader.cpp
     src/ColorTransform.h
     src/ColorTransform.cpp
+    src/Metadata.h
+    src/Metadata.cpp
+    src/MetadataPanel.h
+    src/MetadataPanel.cpp
     src/FrameLoader.h
     src/FrameLoader.cpp
     src/PathBar.h

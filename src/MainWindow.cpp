@@ -6,6 +6,8 @@
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
+#include "Metadata.h"
+#include "MetadataPanel.h"
 #include "PathBar.h"
 
 #include <QAction>
@@ -14,6 +16,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDesktopServices>
+#include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -425,6 +428,8 @@ MainWindow::~MainWindow()
 {
     m_thumbnailPool.clear();
     m_thumbnailPool.waitForDone();
+    m_metadataPool.clear();
+    m_metadataPool.waitForDone();
     qApp->removeEventFilter(this);
 }
 
@@ -612,6 +617,30 @@ void MainWindow::createActions()
         showInExplorer(currentPath());
     });
 
+    // Metadata: a dock on the right (can be moved or floated); remembered with the window state.
+    m_metadataPanel = new MetadataPanel(this);
+    m_metadataDock = new QDockWidget(QStringLiteral("Metadata"), this);
+    m_metadataDock->setObjectName(QStringLiteral("MetadataDock"));
+    m_metadataDock->setWidget(m_metadataPanel);
+    m_metadataDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_metadataDock->setMinimumWidth(300);
+    addDockWidget(Qt::RightDockWidgetArea, m_metadataDock);
+    m_metadataDock->hide();
+    m_metadataAction = m_metadataDock->toggleViewAction();
+    m_metadataAction->setText(QStringLiteral("Metadata"));
+    m_metadataAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
+    m_metadataAction->setToolTip(QStringLiteral("Show all the header information of the file (I or Ctrl+I)"));
+    addAction(m_metadataAction);
+    connect(m_metadataDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible) {
+            scheduleMetadata();
+        }
+    });
+    m_metadataPool.setMaxThreadCount(1);
+    m_metadataTimer.setSingleShot(true);
+    m_metadataTimer.setInterval(120); // while scrubbing or playing, wait until it settles
+    connect(&m_metadataTimer, &QTimer::timeout, this, &MainWindow::loadMetadata);
+
     m_loadLutAction = new QAction(QStringLiteral("Load LUT File…"), this);
     m_loadLutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
     connect(m_loadLutAction, &QAction::triggered, this, &MainWindow::chooseLutFile);
@@ -645,6 +674,7 @@ void MainWindow::createMenus()
     channelMenu->addActions(m_channelGroup->actions());
     viewMenu->addAction(m_clippingAction);
     viewMenu->addAction(m_fullScreenAction);
+    viewMenu->addAction(m_metadataAction);
     viewMenu->addSeparator();
     viewMenu->addAction(QStringLiteral("Edit Path (Alt+D)"), this, [this]() {
         m_pathBar->startEditing();
@@ -661,6 +691,7 @@ void MainWindow::createMenus()
             "  F  fit to window,  1  100% zoom\n"
             "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
             "  C  show clipping\n"
+            "  I  metadata panel (Ctrl+I anywhere)\n"
             "  Ctrl+C  copy the picture\n"
             "  Esc  leave full screen, then back to the grid\n\n"
             "Color:\n"
@@ -716,6 +747,8 @@ void MainWindow::createToolbar()
     toolbar->addAction(m_openImageAction);
     toolbar->addAction(m_fitToWindowAction);
     toolbar->addAction(m_actualSizeAction);
+    toolbar->addSeparator();
+    toolbar->addAction(m_metadataAction);
     toolbar->addSeparator();
 
     // Shows the current view transform; click to pick another (same menu as Color in the menu bar).
@@ -824,6 +857,7 @@ void MainWindow::createCentralLayout()
 
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
+    connect(m_fileGrid, &QListWidget::currentItemChanged, this, &MainWindow::scheduleMetadata);
     connect(m_fileGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         m_thumbnailScheduleTimer.start();
     });
@@ -865,7 +899,9 @@ void MainWindow::loadSettings()
     QSettings settings;
 
     restoreGeometry(settings.value(SettingsMainWindowGeometry).toByteArray());
-    restoreState(settings.value(SettingsMainWindowState).toByteArray());
+    if (!restoreState(settings.value(SettingsMainWindowState).toByteArray())) {
+        resizeDocks({m_metadataDock}, {380}, Qt::Horizontal);
+    }
 
     const QByteArray splitterState = settings.value(SettingsSplitterState).toByteArray();
     if (!splitterState.isEmpty()) {
@@ -1036,6 +1072,7 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     m_currentDisplayImage = frame.display;
     m_currentImagePath = frame.path;
     m_displayedIndex = index;
+    scheduleMetadata();
     m_imageViewport->setImage(frame.display, !m_freshOpen);
     m_freshOpen = false;
 
@@ -1164,6 +1201,11 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
     case Qt::Key_C:
         if (!event->isAutoRepeat()) {
             m_clippingAction->toggle();
+        }
+        return true;
+    case Qt::Key_I:
+        if (!event->isAutoRepeat()) {
+            m_metadataAction->trigger();
         }
         return true;
     default:
@@ -1346,7 +1388,7 @@ void MainWindow::setFullScreenMode(bool on)
     if (on) {
         m_wasMaximized = isMaximized();
         m_hiddenForFullScreen.clear();
-        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel};
+        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel, m_metadataDock};
         for (QToolBar *toolbar : findChildren<QToolBar *>()) {
             chrome.append(toolbar);
         }
@@ -1382,6 +1424,37 @@ QString MainWindow::currentPath() const
         return item->data(FilePathRole).toString();
     }
     return m_currentFolderPath;
+}
+
+void MainWindow::scheduleMetadata()
+{
+    if (m_metadataDock && m_metadataDock->isVisible()) {
+        m_metadataTimer.start();
+    }
+}
+
+// Reads the header on a background thread (it may be on a slow network share).
+void MainWindow::loadMetadata()
+{
+    const QString path = currentPath();
+    if (path.isEmpty() || !QFileInfo(path).isFile()) {
+        ++m_metadataGeneration;
+        m_metadataPanel->showMessage(QStringLiteral("Select an image to see its metadata."));
+        return;
+    }
+    if (path == m_metadataPanel->filePath()) {
+        return;
+    }
+    const int generation = ++m_metadataGeneration;
+    m_metadataPool.clear(); // only the newest request matters
+    m_metadataPool.start([this, path, generation]() {
+        const QList<Metadata::Entry> entries = Metadata::read(path);
+        QMetaObject::invokeMethod(this, [this, path, generation, entries]() {
+            if (generation == m_metadataGeneration) {
+                m_metadataPanel->showEntries(path, entries);
+            }
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::copyImageToClipboard()
@@ -1743,6 +1816,7 @@ void MainWindow::showGrid()
     stopPlayback();
     m_contentStack->setCurrentWidget(m_fileGrid);
     m_pixelLabel->clear();
+    scheduleMetadata();
     updateImageInfo();
     updateColorButton(m_view);
     // Keep the grid on the image that was being viewed.
