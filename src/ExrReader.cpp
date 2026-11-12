@@ -12,10 +12,7 @@
 #include <half.h>
 
 #include <QByteArray>
-#include <QtMath>
 
-#include <array>
-#include <cmath>
 #include <exception>
 #include <set>
 #include <string>
@@ -32,29 +29,6 @@ bool fail(QString *error, const QString &message)
 }
 
 #ifdef ONION_HAVE_OPENEXR
-
-// Lookup table from every 16-bit half value to an 8-bit sRGB display value.
-const std::array<uchar, 65536> &halfToSrgb8()
-{
-    static const std::array<uchar, 65536> table = [] {
-        std::array<uchar, 65536> result {};
-        for (int bits = 0; bits < 65536; ++bits) {
-            half h;
-            h.setBits(static_cast<unsigned short>(bits));
-            const float linear = static_cast<float>(h);
-            float display = 0.0f;
-            if (std::isfinite(linear) && linear > 0.0f) {
-                display = linear <= 0.0031308f ? linear * 12.92f
-                                               : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
-            } else if (std::isinf(linear) && linear > 0.0f) {
-                display = 1.0f;
-            }
-            result[static_cast<size_t>(bits)] = static_cast<uchar>(qBound(0, qRound(display * 255.0f), 255));
-        }
-        return result;
-    }();
-    return table;
-}
 
 // Picks the layer to show: the unnamed top-level RGB/Y channels if present, otherwise the first
 // layer that has R, G, B or Y channels (for example "beauty" in "beauty.R").
@@ -166,24 +140,28 @@ QImage read(const QString &filePath, QString *error, bool preferPreview)
 
         const int width = frame.max.x - frame.min.x + 1;
         const int height = frame.max.y - frame.min.y + 1;
-        QImage image(width, height, QImage::Format_RGB32);
+        // Hand over the stored half-float values untouched; the view transform maps them to the
+        // screen (scene-linear to sRGB by default, or a log curve).
+        QImage image(width, height, QImage::Format_RGBX16FPx4);
         if (image.isNull()) {
             fail(error, QStringLiteral("Not enough memory for the EXR image."));
             return QImage();
         }
         image.fill(Qt::black);
-
-        const std::array<uchar, 65536> &toDisplay = halfToSrgb8();
         const int firstY = qMax(frame.min.y, dataWindow.min.y);
         const int lastY = qMin(frame.max.y, dataWindow.max.y);
         const int firstX = qMax(frame.min.x, dataWindow.min.x);
         const int lastX = qMin(frame.max.x, dataWindow.max.x);
         for (int y = firstY; y <= lastY; ++y) {
-            auto *line = reinterpret_cast<QRgb *>(image.scanLine(y - frame.min.y));
+            auto *line = reinterpret_cast<quint16 *>(image.scanLine(y - frame.min.y));
             const Imf::Rgba *row = pixels[y - dataWindow.min.y];
             for (int x = firstX; x <= lastX; ++x) {
                 const Imf::Rgba &p = row[x - dataWindow.min.x];
-                line[x - frame.min.x] = qRgb(toDisplay[p.r.bits()], toDisplay[p.g.bits()], toDisplay[p.b.bits()]);
+                quint16 *out = line + (x - frame.min.x) * 4;
+                out[0] = p.r.bits();
+                out[1] = p.g.bits();
+                out[2] = p.b.bits();
+                out[3] = 0x3C00; // 1.0
             }
         }
         return image;

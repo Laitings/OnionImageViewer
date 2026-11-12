@@ -6,7 +6,8 @@
 
 // Minimal reader for SMPTE 268M DPX files, the common film/VFX cases:
 // RGB, RGBA, ABGR and luma, 8/10/12/16 bits per component, filled (method A/B) or packed,
-// big or little endian. Values are shown as stored (no log-to-display conversion).
+// big or little endian. Returns a 16-bit-per-channel image holding the stored code values;
+// pass it through ColorTransform::toDisplay to show it.
 namespace Dpx {
 
 bool isDpxFile(const QString &filePath);

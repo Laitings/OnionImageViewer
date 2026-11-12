@@ -14,7 +14,7 @@ class ImageViewport final : public QWidget
 public:
     explicit ImageViewport(QWidget *parent = nullptr);
 
-    void setImage(const QImage &image);
+    void setImage(const QImage &image, bool keepView = false);
     bool hasImage() const;
 
 public slots:

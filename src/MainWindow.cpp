@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "ColorTransform.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "FolderTreePanel.h"
@@ -7,6 +8,7 @@
 #include "ImageViewport.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
@@ -59,6 +61,7 @@ namespace {
 const QString SettingsMainWindowGeometry = QStringLiteral("mainWindow/geometry");
 const QString SettingsMainWindowState = QStringLiteral("mainWindow/state");
 const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
+const QString SettingsViewTransform = QStringLiteral("view/colorTransform");
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
 const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
@@ -96,13 +99,16 @@ QString thumbnailCacheDirectory()
     return cacheDirectory;
 }
 
-QString thumbnailCachePath(const QFileInfo &fileInfo)
+QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view)
 {
-    const QString cacheKeySource = fileInfo.absoluteFilePath()
+    QString cacheKeySource = fileInfo.absoluteFilePath()
         + QStringLiteral("|")
         + QString::number(fileInfo.size())
         + QStringLiteral("|")
         + QString::number(fileInfo.lastModified().toMSecsSinceEpoch());
+    if (view != ColorTransform::View::None) {
+        cacheKeySource += QStringLiteral("|") + ColorTransform::settingsKey(view);
+    }
 
     const QByteArray cacheKey = QCryptographicHash::hash(cacheKeySource.toUtf8(), QCryptographicHash::Sha256).toHex();
     return thumbnailCacheDirectory() + QStringLiteral("/") + QString::fromLatin1(cacheKey) + QStringLiteral(".png");
@@ -224,16 +230,30 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
     }
 }
 
-QImage readerThumbnailForImage(const QString &filePath)
+// Turns a full-precision image (DPX/EXR) into a display thumbnail: shrink it cheaply first so the
+// colour transform only touches a small image, then apply the view and scale smoothly.
+QImage displayThumbnail(const QImage &source, ColorTransform::View view)
+{
+    if (source.isNull()) {
+        return source;
+    }
+    QImage reduced = source;
+    const QSize roughSize = ThumbnailSize * 2;
+    if (reduced.width() > roughSize.width() || reduced.height() > roughSize.height()) {
+        reduced = reduced.scaled(roughSize, Qt::KeepAspectRatio, Qt::FastTransformation);
+    }
+    return ColorTransform::toDisplay(reduced, view)
+        .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
+QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view)
 {
     if (Exr::isExrFile(filePath)) {
-        const QImage image = Exr::read(filePath, nullptr, true);
-        return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        return displayThumbnail(Exr::read(filePath, nullptr, true), view);
     }
 
     if (Dpx::isDpxFile(filePath)) {
-        const QImage image = Dpx::read(filePath, nullptr, ThumbnailSize);
-        return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        return displayThumbnail(Dpx::read(filePath, nullptr, ThumbnailSize), view);
     }
 
     QImageReader reader(filePath);
@@ -244,14 +264,15 @@ QImage readerThumbnailForImage(const QString &filePath)
         reader.setScaledSize(imageSize.scaled(ThumbnailSize, Qt::KeepAspectRatio));
     }
 
-    return reader.read();
+    const QImage image = reader.read();
+    return view == ColorTransform::View::None ? image : ColorTransform::toDisplay(image, view);
 }
 
-QImage loadThumbnailImage(const QString &filePath, bool *pending)
+QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, bool *pending)
 {
     *pending = false;
     const QFileInfo fileInfo(filePath);
-    const QString cachePath = thumbnailCachePath(fileInfo);
+    const QString cachePath = thumbnailCachePath(fileInfo, view);
 
     QImage thumbnail;
     if (thumbnail.load(cachePath)) {
@@ -268,7 +289,8 @@ QImage loadThumbnailImage(const QString &filePath, bool *pending)
             thumbnail = shellThumbnailForImage(filePath, SIIGBF(0), pending);
         }
         if (!thumbnail.isNull()) {
-            thumbnail = thumbnail.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            thumbnail = ColorTransform::toDisplay(thumbnail, view)
+                            .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             saveThumbnailToCache(thumbnail, cachePath);
         }
         return thumbnail;
@@ -276,12 +298,13 @@ QImage loadThumbnailImage(const QString &filePath, bool *pending)
 
     thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
     if (!thumbnail.isNull()) {
-        thumbnail = thumbnail.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        thumbnail = ColorTransform::toDisplay(thumbnail, view)
+                        .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 #endif
 
     if (thumbnail.isNull()) {
-        thumbnail = readerThumbnailForImage(filePath);
+        thumbnail = readerThumbnailForImage(filePath, view);
     }
 
     if (!thumbnail.isNull()) {
@@ -373,6 +396,27 @@ void MainWindow::createActions()
     connect(m_actualSizeAction, &QAction::triggered, this, [this]() {
         m_imageViewport->zoomActualSize();
     });
+
+    // View transform: how stored values are mapped to the screen (for log camera footage).
+    m_viewTransformGroup = new QActionGroup(this);
+    m_viewTransformGroup->setExclusive(true);
+    const struct {
+        ColorTransform::View view;
+        QKeySequence shortcut;
+    } transforms[] = {
+        {ColorTransform::View::None, QKeySequence(Qt::CTRL | Qt::Key_0)},
+        {ColorTransform::View::LogC3ToRec709, QKeySequence(Qt::CTRL | Qt::Key_3)},
+        {ColorTransform::View::LogC4ToRec709, QKeySequence(Qt::CTRL | Qt::Key_4)},
+    };
+    for (const auto &entry : transforms) {
+        auto *action = new QAction(ColorTransform::displayName(entry.view), m_viewTransformGroup);
+        action->setCheckable(true);
+        action->setShortcut(entry.shortcut);
+        action->setData(static_cast<int>(entry.view));
+        connect(action, &QAction::triggered, this, [this, view = entry.view]() {
+            setViewTransform(view);
+        });
+    }
 }
 
 void MainWindow::createMenus()
@@ -389,6 +433,9 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_fitToWindowAction);
     viewMenu->addAction(m_actualSizeAction);
+    viewMenu->addSeparator();
+    QMenu *colorMenu = viewMenu->addMenu(QStringLiteral("Color"));
+    colorMenu->addActions(m_viewTransformGroup->actions());
 }
 
 void MainWindow::createToolbar()
@@ -522,6 +569,9 @@ void MainWindow::loadSettings()
     const bool foldersVisible = settings.value(SettingsFoldersVisible, false).toBool();
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
+
+    m_view = ColorTransform::fromSettingsKey(settings.value(SettingsViewTransform).toString());
+    updateViewTransformActions();
 }
 
 void MainWindow::saveSettings()
@@ -563,7 +613,8 @@ void MainWindow::openImagePath(const QString &filePath)
         return;
     }
 
-    m_imageViewport->setImage(result.image);
+    m_currentSourceImage = result.image;
+    m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view));
     if (m_currentImagePaths.isEmpty()) {
         m_currentImagePaths.append(filePath);
         m_currentImageIndex = 0;
@@ -580,6 +631,52 @@ void MainWindow::openImagePath(const QString &filePath)
     m_contentStack->setCurrentWidget(m_imageViewport->parentWidget());
     updateImageNavigation();
     statusBar()->showMessage(filePath, 5000);
+}
+
+void MainWindow::setViewTransform(ColorTransform::View view)
+{
+    updateViewTransformActions(view);
+    if (view == m_view) {
+        return;
+    }
+
+    m_view = view;
+    QSettings().setValue(SettingsViewTransform, ColorTransform::settingsKey(view));
+    statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)), 3000);
+
+    if (!m_currentSourceImage.isNull()) {
+        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view), true);
+    }
+    resetThumbnails();
+}
+
+void MainWindow::updateViewTransformActions()
+{
+    updateViewTransformActions(m_view);
+}
+
+void MainWindow::updateViewTransformActions(ColorTransform::View view)
+{
+    for (QAction *action : m_viewTransformGroup->actions()) {
+        action->setChecked(action->data().toInt() == static_cast<int>(view));
+    }
+}
+
+// Throws away the current thumbnails and makes them again (for example after a view change).
+void MainWindow::resetThumbnails()
+{
+    m_pendingThumbnailPaths.clear();
+    m_thumbnailRetryCounts.clear();
+    m_thumbnailRetryTimer.stop();
+    m_thumbnailPool.clear();
+    ++m_thumbnailGeneration;
+
+    const QIcon placeholder = style()->standardIcon(QStyle::SP_FileIcon);
+    for (QListWidgetItem *item : std::as_const(m_thumbnailItems)) {
+        item->setData(ThumbnailLoadedRole, false);
+        item->setIcon(placeholder);
+    }
+    QTimer::singleShot(0, this, &MainWindow::scheduleVisibleThumbnails);
 }
 
 void MainWindow::setFolderPanelVisible(bool visible)
@@ -843,11 +940,12 @@ void MainWindow::requestThumbnail(QListWidgetItem *item, int priority)
     }
 
     const int generation = m_thumbnailGeneration;
+    const ColorTransform::View view = m_view;
     m_pendingThumbnailPaths.insert(filePath);
 
-    m_thumbnailPool.start([this, filePath, generation]() {
+    m_thumbnailPool.start([this, filePath, generation, view]() {
         bool pending = false;
-        const QImage thumbnail = loadThumbnailImage(filePath, &pending);
+        const QImage thumbnail = loadThumbnailImage(filePath, view, &pending);
         QMetaObject::invokeMethod(
             this,
             [this, filePath, generation, thumbnail, pending]() {

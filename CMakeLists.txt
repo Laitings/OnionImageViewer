@@ -50,6 +50,8 @@ qt_add_executable(OnionImageViewer
     src/DpxReader.cpp
     src/ExrReader.h
     src/ExrReader.cpp
+    src/ColorTransform.h
+    src/ColorTransform.cpp
 )
 
 target_link_libraries(OnionImageViewer

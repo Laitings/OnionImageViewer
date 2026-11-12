@@ -289,7 +289,8 @@ QImage decode(const uchar *data, qint64 size, QString *error, const QSize &targe
     const quint32 outHeight = (height + step - 1) / step;
 
     const int valuesPerLine = int(width) * components;
-    QImage image(int(outWidth), int(outHeight), components == 4 ? QImage::Format_ARGB32 : QImage::Format_RGB32);
+    // Keep the full stored precision (16 bits per channel); the view transform maps it to the screen.
+    QImage image(int(outWidth), int(outHeight), components == 4 ? QImage::Format_RGBA64 : QImage::Format_RGBX64);
     if (image.isNull()) {
         fail(error, QStringLiteral("Not enough memory for the DPX image."));
         return QImage();
@@ -307,45 +308,45 @@ QImage decode(const uchar *data, qint64 size, QString *error, const QSize &targe
 
         decodeLine(reader, offset, valuesPerLine, bitSize, packing, values);
 
-        auto *line = reinterpret_cast<QRgb *>(image.scanLine(int(outY)));
+        auto *line = reinterpret_cast<QRgba64 *>(image.scanLine(int(outY)));
         for (quint32 outX = 0; outX < outWidth; ++outX) {
             const quint16 *v = values.data() + size_t(outX) * step * size_t(components);
-            int r = 0;
-            int g = 0;
-            int b = 0;
-            int a = 255;
+            quint16 r = 0;
+            quint16 g = 0;
+            quint16 b = 0;
+            quint16 a = 65535;
             switch (descriptor) {
             case 50:
-                r = v[0] >> 8;
-                g = v[1] >> 8;
-                b = v[2] >> 8;
+                r = v[0];
+                g = v[1];
+                b = v[2];
                 break;
             case 51:
-                r = v[0] >> 8;
-                g = v[1] >> 8;
-                b = v[2] >> 8;
-                a = v[3] >> 8;
+                r = v[0];
+                g = v[1];
+                b = v[2];
+                a = v[3];
                 break;
             case 52:
-                a = v[0] >> 8;
-                b = v[1] >> 8;
-                g = v[2] >> 8;
-                r = v[3] >> 8;
+                a = v[0];
+                b = v[1];
+                g = v[2];
+                r = v[3];
                 break;
             case 1:
-                r = v[0] >> 8;
+                r = v[0];
                 break;
             case 2:
-                g = v[0] >> 8;
+                g = v[0];
                 break;
             case 3:
-                b = v[0] >> 8;
+                b = v[0];
                 break;
             default: // luma or alpha shown as grey
-                r = g = b = v[0] >> 8;
+                r = g = b = v[0];
                 break;
             }
-            line[outX] = qRgba(r, g, b, a);
+            line[outX] = qRgba64(r, g, b, a);
         }
     }
 
