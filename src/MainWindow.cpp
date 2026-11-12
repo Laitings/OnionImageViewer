@@ -146,7 +146,21 @@ QImage imageFromHBitmap(HBITMAP bitmap)
     return image;
 }
 
-QImage shellThumbnailForImage(const QString &filePath)
+// OneDrive (and other cloud sync) "online-only" files are placeholders: reading their contents
+// makes Windows download the whole file. Their attributes can be read without downloading.
+bool isCloudOnlyFile(const QString &filePath)
+{
+    const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(filePath).utf16()));
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return false;
+    }
+
+    constexpr DWORD RecallOnOpen = 0x00040000;       // FILE_ATTRIBUTE_RECALL_ON_OPEN
+    constexpr DWORD RecallOnDataAccess = 0x00400000; // FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    return (attributes & (FILE_ATTRIBUTE_OFFLINE | RecallOnOpen | RecallOnDataAccess)) != 0;
+}
+
+QImage shellThumbnailForImage(const QString &filePath, SIIGBF extraFlags)
 {
     const HRESULT initializeResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool shouldUninitialize = SUCCEEDED(initializeResult);
@@ -166,7 +180,7 @@ QImage shellThumbnailForImage(const QString &filePath)
         SIZE size = {ThumbnailSize.width(), ThumbnailSize.height()};
         const HRESULT thumbnailResult = imageFactory->GetImage(
             size,
-            SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK,
+            SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK | SIIGBF_THUMBNAILONLY | extraFlags,
             &bitmap);
 
         if (SUCCEEDED(thumbnailResult) && bitmap) {
@@ -208,7 +222,21 @@ QImage loadThumbnailImage(const QString &filePath)
     }
 
 #ifdef Q_OS_WIN
-    thumbnail = shellThumbnailForImage(filePath);
+    if (isCloudOnlyFile(filePath)) {
+        // Never read the file itself here, or OneDrive downloads it. First try the Windows
+        // thumbnail cache, then the sync provider's own thumbnail (OneDrive serves these from
+        // the cloud, the same way Explorer shows them). If neither has one, keep the plain icon.
+        thumbnail = shellThumbnailForImage(filePath, SIIGBF_INCACHEONLY);
+        if (thumbnail.isNull()) {
+            thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
+        }
+        if (!thumbnail.isNull()) {
+            thumbnail.save(cachePath, "PNG");
+        }
+        return thumbnail;
+    }
+
+    thumbnail = shellThumbnailForImage(filePath, SIIGBF(0));
 #endif
 
     if (thumbnail.isNull()) {
