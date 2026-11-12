@@ -1,5 +1,8 @@
 #pragma once
 
+#include "ColorTransform.h"
+
+#include <QImage>
 #include <QMainWindow>
 #include <QHash>
 #include <QSet>
@@ -9,6 +12,7 @@
 #include <memory>
 
 class QAction;
+class QActionGroup;
 class FolderTreePanel;
 class ImageLoader;
 class ImageViewport;
@@ -16,6 +20,7 @@ class QIcon;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QMenu;
 class QPushButton;
 class QSplitter;
 class QStackedWidget;
@@ -43,6 +48,13 @@ private:
     void openImage();
     void openImagePath(const QString &filePath);
     void setFolderPanelVisible(bool visible);
+    void setViewTransform(ColorTransform::View view);
+    void updateViewTransformActions();
+    void chooseLutFile();
+    void useLutFile(const QString &filePath);
+    void updateLutActions();
+    void updateViewTransformActions(ColorTransform::View view);
+    void resetThumbnails();
     void handleFolderSelected(const QString &folderPath);
     void handleGridItemActivated(QListWidgetItem *item);
     void populateFileGrid(const QString &folderPath, bool addToHistory = true);
@@ -74,6 +86,12 @@ private:
     QAction *m_openImageAction = nullptr;
     QAction *m_fitToWindowAction = nullptr;
     QAction *m_actualSizeAction = nullptr;
+    QActionGroup *m_viewTransformGroup = nullptr;
+    QAction *m_customLutAction = nullptr;
+    QAction *m_loadLutAction = nullptr;
+    QMenu *m_recentLutsMenu = nullptr;
+    ColorTransform::View m_view = ColorTransform::View::None;
+    QImage m_currentSourceImage;
     QString m_currentFolderPath;
     QStringList m_folderHistory;
     QStringList m_currentImagePaths;

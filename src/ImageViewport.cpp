@@ -49,8 +49,10 @@ ImageViewport::ImageViewport(QWidget *parent)
     });
 }
 
-void ImageViewport::setImage(const QImage &image)
+void ImageViewport::setImage(const QImage &image, bool keepView)
 {
+    // Same picture shown differently (e.g. a new color view): keep zoom and position.
+    const bool sameSize = !m_image.isNull() && image.size() == m_image.size();
     // Convert once to a format QPainter can blit directly, so painting never has to
     // convert pixel formats on the fly.
     if (image.isNull()) {
@@ -61,6 +63,11 @@ void ImageViewport::setImage(const QImage &image)
         m_image = image.convertToFormat(QImage::Format_RGB32);
     }
     invalidateScaledCache();
+
+    if (keepView && sameSize) {
+        update();
+        return;
+    }
 
     if (m_image.isNull()) {
         fitToWindow();
