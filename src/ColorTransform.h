@@ -14,6 +14,8 @@ enum class View {
     LogC3ToRec709, // ARRI LogC3 (EI 800) / AWG3: ARRI's LUT when found, else an approximation
     LogC4ToRec709, // ARRI LogC4 / AWG4: ARRI's LUT when found, else an approximation
     CustomLut,     // a .cube LUT file loaded with loadLut()
+    Auto,          // per image, from the file's tags: LogC3/LogC4 plates and ACES comps get the
+                   // matching ARRI view, everything else None
 };
 
 // What the stored values are, for floating-point (EXR) images. ACES footage is first converted
@@ -29,6 +31,17 @@ enum class Input {
 };
 
 QString displayName(View view);
+
+// The view an image is actually shown with: Auto resolved from the image's tags, others as is.
+View resolveView(View view, const QImage &source);
+
+// Image text keys readers set (besides colorSpaceTextKey()).
+inline QString cameraCurveTextKey() { return QStringLiteral("CameraCurve"); } // "logc3" / "logc4"
+inline QString sourceFormatTextKey() { return QStringLiteral("SourceFormat"); } // e.g. "DPX 10-bit"
+
+// Short human description of what the image holds and how it is interpreted, e.g.
+// "EXR half float · ACES2065-1 (tagged)".
+QString describeSource(const QImage &source, Input input);
 QString settingsKey(View view);
 View fromSettingsKey(const QString &key);
 

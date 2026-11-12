@@ -221,6 +221,7 @@ std::shared_ptr<const Tables> buildTables(View view)
         break;
     case View::None:
     case View::CustomLut:
+    case View::Auto:
         break;
     }
 
@@ -245,7 +246,7 @@ std::shared_ptr<const Tables> buildTables(View view)
 const Tables &tablesFor(View view)
 {
     static std::mutex mutex;
-    static std::shared_ptr<const Tables> cache[4];
+    static std::shared_ptr<const Tables> cache[5];
     std::lock_guard<std::mutex> lock(mutex);
     auto &slot = cache[static_cast<int>(view)];
     if (!slot) {
@@ -313,6 +314,7 @@ std::shared_ptr<const CubeLut> lutForView(View view)
     case View::LogC4ToRec709:
         return lutSnapshot(ArriLogC4Slot);
     case View::None:
+    case View::Auto:
         break;
     }
     return nullptr;
@@ -595,6 +597,7 @@ QImage convertAces(const QImage &input, View view, ColorTransform::Input aces)
         encode = linearToLogC4;
         break;
     case View::None:
+    case View::Auto:
         matrix = ap0 ? &Ap0ToRec709 : &Ap1ToRec709;
         break;
     }
@@ -652,6 +655,8 @@ QString displayName(View view)
     case View::LogC4ToRec709:
         return arriLutFilePath(view).isEmpty() ? QStringLiteral("ARRI LogC4 → Rec.709 (approx.)")
                                                 : QStringLiteral("ARRI LogC4 → Rec.709");
+    case View::Auto:
+        return QStringLiteral("Auto (from file tags)");
     case View::CustomLut: {
         const QString path = lutFilePath();
         return path.isEmpty() ? QStringLiteral("LUT file")
@@ -672,6 +677,8 @@ QString settingsKey(View view)
         return QStringLiteral("logc4-rec709");
     case View::CustomLut:
         return QStringLiteral("lut");
+    case View::Auto:
+        return QStringLiteral("auto");
     case View::None:
         break;
     }
@@ -680,7 +687,7 @@ QString settingsKey(View view)
 
 View fromSettingsKey(const QString &key)
 {
-    for (View view : {View::LogC3ToRec709, View::LogC4ToRec709, View::CustomLut}) {
+    for (View view : {View::LogC3ToRec709, View::LogC4ToRec709, View::CustomLut, View::Auto}) {
         if (key == settingsKey(view)) {
             return view;
         }
@@ -690,6 +697,10 @@ View fromSettingsKey(const QString &key)
 
 QString cacheKey(View view)
 {
+    if (view == View::Auto) {
+        return QStringLiteral("auto|") + cacheKey(View::LogC3ToRec709) + QStringLiteral("|")
+            + cacheKey(View::LogC4ToRec709);
+    }
     // The suffix changes whenever the built-in curves change, so old thumbnails are remade.
     if (const auto lut = lutForView(view)) {
         return settingsKey(view) + QStringLiteral("|lut|") + lut->identity;
@@ -835,11 +846,72 @@ QString lutFilePath()
     return lut ? lut->filePath : QString();
 }
 
+View resolveView(View view, const QImage &source)
+{
+    if (view != View::Auto) {
+        return view;
+    }
+    const QString space = source.text(colorSpaceTextKey());
+    if (space == inputSettingsKey(Input::Aces2065) || space == inputSettingsKey(Input::AcesCg)) {
+        return View::LogC4ToRec709; // ACES comps are shown through the camera's LogC4 look
+    }
+    const QString curve = source.text(cameraCurveTextKey());
+    if (curve == QStringLiteral("logc4")) {
+        return View::LogC4ToRec709;
+    }
+    if (curve == QStringLiteral("logc3")) {
+        return View::LogC3ToRec709;
+    }
+    return View::None;
+}
+
+QString describeSource(const QImage &source, Input input)
+{
+    if (source.isNull()) {
+        return QString();
+    }
+    QString format = source.text(sourceFormatTextKey());
+    if (format.isEmpty()) {
+        format = isFloatFormat(source.format()) ? QStringLiteral("float")
+                                                : QStringLiteral("%1-bit").arg(source.depth() >= 64 ? 16 : 8);
+    }
+    QStringList parts = {format};
+
+    const Input resolved = resolveInput(input, source);
+    const bool tagged = !source.text(colorSpaceTextKey()).isEmpty();
+    const QString curve = source.text(cameraCurveTextKey());
+    QString space;
+    switch (resolved) {
+    case Input::Aces2065:
+        space = QStringLiteral("ACES2065-1");
+        break;
+    case Input::AcesCg:
+        space = QStringLiteral("ACEScg");
+        break;
+    case Input::CameraLog:
+        space = curve == QStringLiteral("logc4") ? QStringLiteral("ARRI LogC4")
+            : curve == QStringLiteral("logc3")   ? QStringLiteral("ARRI LogC3")
+            : isFloatFormat(source.format())     ? QStringLiteral("camera log")
+                                                 : QString();
+        break;
+    case Input::Linear:
+        space = QStringLiteral("scene linear");
+        break;
+    case Input::Auto:
+        break;
+    }
+    if (!space.isEmpty()) {
+        parts.append(space + (tagged && input == Input::Auto ? QStringLiteral(" (tagged)") : QString()));
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
 QImage toDisplay(const QImage &source, View view, Input inputSpace)
 {
     if (source.isNull()) {
         return source;
     }
+    view = resolveView(view, source);
 
     const bool floatSource = isFloatFormat(source.format());
     std::shared_ptr<const CubeLut> lut = lutForView(view);

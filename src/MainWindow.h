@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ColorTransform.h"
+#include "FrameLoader.h"
 
 #include <QImage>
 #include <QMainWindow>
@@ -23,6 +24,10 @@ class QListWidgetItem;
 class QMenu;
 class QToolButton;
 class QPushButton;
+class PathBar;
+class QKeyEvent;
+class QDragEnterEvent;
+class QDropEvent;
 class QSplitter;
 class QStackedWidget;
 
@@ -34,9 +39,14 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+    // Opens a folder (in the grid) or an image (in the viewer), e.g. from the command line.
+    void openPath(const QString &path);
+
 protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
     void createActions();
@@ -78,13 +88,68 @@ private:
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending);
     bool isImageFile(const QString &filePath) const;
 
-    std::unique_ptr<ImageLoader> m_imageLoader;
+    // Viewer: frames load in the background (FrameLoader); these show and step through them.
+    enum CompareMode { CompareOff, CompareNoView, ComparePinned };
+    void showFrame(const FrameLoader::Frame &frame, bool requested);
+    void stepImage(int delta, bool wrap = false);
+    void goToImage(int index);
+    void prefetchAround();
+    void togglePlayback();
+    void stopPlayback();
+    void playbackTick();
+    bool handleViewerKey(QKeyEvent *event);
+    void refreshCurrentDisplay();
+    void setCompareMode(CompareMode mode);
+    void pinCurrentImage();
+    void updateCompare();
+    void updateImageInfo();
+    void updatePixelReadout(const QPoint &pixel);
+    void handlePathActivated(const QString &path);
+    bool isViewerVisible() const;
+
+    // Extras: channels, clipping, full screen, clipboard and Explorer.
+    void setChannel(int channel, bool toggle);
+    void setFullScreenMode(bool on);
+    void copyImageToClipboard();
+    void copyPathToClipboard(const QString &path);
+    void showInExplorer(const QString &path);
+    void showGridContextMenu(const QPoint &pos);
+    QString currentPath() const;
+
+    std::shared_ptr<ImageLoader> m_imageLoader;
+    FrameLoader *m_frameLoader = nullptr;
+    PathBar *m_pathBar = nullptr;
+    QLabel *m_infoLabel = nullptr;
+    QLabel *m_pixelLabel = nullptr;
+    QAction *m_playAction = nullptr;
+    QAction *m_pinAction = nullptr;
+    QActionGroup *m_compareGroup = nullptr;
+    QActionGroup *m_channelGroup = nullptr;
+    QAction *m_clippingAction = nullptr;
+    QAction *m_fullScreenAction = nullptr;
+    QAction *m_copyImageAction = nullptr;
+    QAction *m_copyPathAction = nullptr;
+    QAction *m_showInExplorerAction = nullptr;
+    QList<QWidget *> m_hiddenForFullScreen;
+    bool m_wasMaximized = false;
+    QTimer m_playTimer;
+    QImage m_currentDisplayImage;
+    QString m_currentImagePath;
+    QImage m_pinnedSource;
+    QString m_pinnedPath;
+    QImage m_pinnedDisplay;
+    QString m_pinnedDisplayKey;
+    CompareMode m_compareMode = CompareOff;
+    CompareMode m_lastCompareMode = CompareNoView;
+    QPoint m_hoveredPixel = QPoint(-1, -1);
+    int m_displayedIndex = -1;
+    int m_stepDirection = 1;
+    bool m_freshOpen = false;
     FolderTreePanel *m_folderTreePanel = nullptr;
     QListWidget *m_fileGrid = nullptr;
     ImageViewport *m_imageViewport = nullptr;
     QStackedWidget *m_contentStack = nullptr;
     QSplitter *m_splitter = nullptr;
-    QLabel *m_folderPathLabel = nullptr;
     QPushButton *m_closeImageButton = nullptr;
     QPushButton *m_previousImageButton = nullptr;
     QPushButton *m_nextImageButton = nullptr;
