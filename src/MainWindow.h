@@ -1,7 +1,10 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QHash>
 #include <QSet>
+#include <QThreadPool>
+#include <QTimer>
 #include <QStringList>
 #include <memory>
 
@@ -75,6 +78,9 @@ private:
     QStringList m_folderHistory;
     QStringList m_currentImagePaths;
     QSet<QString> m_pendingThumbnailPaths;
+    QHash<QString, QListWidgetItem *> m_thumbnailItems;
+    QThreadPool m_thumbnailPool;
+    QTimer m_thumbnailScheduleTimer;
     int m_thumbnailGeneration = 0;
     int m_currentImageIndex = -1;
 };
