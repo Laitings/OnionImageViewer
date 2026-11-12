@@ -55,7 +55,7 @@ private:
     void updateImageNavigation();
     void setImageListFromFolder(const QString &folderPath);
     void scheduleVisibleThumbnails();
-    void requestThumbnail(QListWidgetItem *item);
+    void requestThumbnail(QListWidgetItem *item, int priority);
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending);
     bool isImageFile(const QString &filePath) const;
 
@@ -83,6 +83,7 @@ private:
     QTimer m_thumbnailScheduleTimer;
     QTimer m_thumbnailRetryTimer;
     QHash<QString, int> m_thumbnailRetryCounts;
+    bool m_backgroundThumbnailsQueued = false;
     int m_thumbnailGeneration = 0;
     int m_currentImageIndex = -1;
 };

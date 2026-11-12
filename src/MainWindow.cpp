@@ -65,7 +65,9 @@ const int IsImageRole = Qt::UserRole + 2;
 const int ThumbnailLoadedRole = Qt::UserRole + 3;
 const QSize ThumbnailSize(128, 128);
 constexpr int ThumbnailScheduleDelayMs = 60;
-constexpr int MaxPendingThumbnails = 64;
+constexpr int MaxPendingThumbnails = 32;
+constexpr int ThumbnailPriorityVisible = 1;
+constexpr int ThumbnailPriorityBackground = 0;
 constexpr int ThumbnailRetryDelayMs = 2000;
 constexpr int MaxThumbnailRetries = 30; // about a minute of retries
 
@@ -221,7 +223,7 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
 QImage readerThumbnailForImage(const QString &filePath)
 {
     if (Dpx::isDpxFile(filePath)) {
-        const QImage image = Dpx::read(filePath);
+        const QImage image = Dpx::read(filePath, nullptr, ThumbnailSize);
         return image.isNull() ? image : image.scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 
@@ -757,41 +759,71 @@ void MainWindow::setImageListFromFolder(const QString &folderPath)
 
 void MainWindow::scheduleVisibleThumbnails()
 {
-    if (!m_fileGrid || m_contentStack->currentWidget() != m_fileGrid) {
+    m_backgroundThumbnailsQueued = false;
+    // Keeps running while an image is open too, so the grid is ready when you go back.
+    if (!m_fileGrid || m_fileGrid->count() == 0) {
         return;
     }
 
-    int requestedCount = 0;
+    auto needsThumbnail = [this](const QListWidgetItem *item) {
+        return item && item->data(IsImageRole).toBool() && !item->data(ThumbnailLoadedRole).toBool();
+    };
+
+    // On-screen items first, at high priority so they jump ahead of background work.
+    int firstVisibleRow = -1;
+    int lastVisibleRow = -1;
     const QRect visibleRect = m_fileGrid->viewport()->rect();
     for (int row = 0; row < m_fileGrid->count(); ++row) {
         QListWidgetItem *item = m_fileGrid->item(row);
-        if (!item || !item->data(IsImageRole).toBool() || item->data(ThumbnailLoadedRole).toBool()) {
+        if (!m_fileGrid->visualItemRect(item).intersects(visibleRect)) {
+            if (firstVisibleRow >= 0) {
+                break; // rows are laid out in order, so the visible ones are contiguous
+            }
             continue;
         }
 
-        if (m_fileGrid->visualItemRect(item).intersects(visibleRect)) {
-            requestThumbnail(item);
-            ++requestedCount;
+        if (firstVisibleRow < 0) {
+            firstVisibleRow = row;
+        }
+        lastVisibleRow = row;
+        if (needsThumbnail(item)) {
+            requestThumbnail(item, ThumbnailPriorityVisible);
         }
     }
 
-    if (requestedCount > 0) {
-        return;
+    // Then keep working through the rest of the folder in the background: the rows just below
+    // the view first, then the ones above it. Only a limited number are queued at a time, so a
+    // scroll never has to wait behind a long backlog.
+    if (firstVisibleRow < 0) {
+        firstVisibleRow = 0;
+        lastVisibleRow = -1;
     }
 
-    // Everything on screen is done or queued: prefetch a limited number of off-screen thumbnails.
-    for (int row = 0; row < m_fileGrid->count() && m_pendingThumbnailPaths.size() < MaxPendingThumbnails; ++row) {
+    auto queueBackground = [&](int row) {
+        if (m_pendingThumbnailPaths.size() >= MaxPendingThumbnails) {
+            return false;
+        }
         QListWidgetItem *item = m_fileGrid->item(row);
-        if (!item || !item->data(IsImageRole).toBool() || item->data(ThumbnailLoadedRole).toBool()) {
-            continue;
+        // Items waiting on a Windows background fetch are retried only while visible.
+        if (needsThumbnail(item) && !m_thumbnailRetryCounts.contains(item->data(FilePathRole).toString())) {
+            requestThumbnail(item, ThumbnailPriorityBackground);
         }
+        return true;
+    };
 
-        requestThumbnail(item);
-        ++requestedCount;
+    for (int row = lastVisibleRow + 1; row < m_fileGrid->count(); ++row) {
+        if (!queueBackground(row)) {
+            return;
+        }
+    }
+    for (int row = firstVisibleRow - 1; row >= 0; --row) {
+        if (!queueBackground(row)) {
+            return;
+        }
     }
 }
 
-void MainWindow::requestThumbnail(QListWidgetItem *item)
+void MainWindow::requestThumbnail(QListWidgetItem *item, int priority)
 {
     const QString filePath = item->data(FilePathRole).toString();
     if (filePath.isEmpty() || m_pendingThumbnailPaths.contains(filePath)) {
@@ -810,7 +842,7 @@ void MainWindow::requestThumbnail(QListWidgetItem *item)
                 applyThumbnail(filePath, generation, thumbnail, pending);
             },
             Qt::QueuedConnection);
-    });
+    }, priority);
 }
 
 void MainWindow::applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending)
@@ -820,6 +852,13 @@ void MainWindow::applyThumbnail(const QString &filePath, int generation, const Q
     }
 
     m_pendingThumbnailPaths.remove(filePath);
+
+    // Top up the background queue once it has drained halfway.
+    if (!m_backgroundThumbnailsQueued && m_pendingThumbnailPaths.size() < MaxPendingThumbnails / 2) {
+        m_backgroundThumbnailsQueued = true;
+        QTimer::singleShot(0, this, &MainWindow::scheduleVisibleThumbnails);
+    }
+
     QListWidgetItem *item = m_thumbnailItems.value(filePath, nullptr);
     if (!item) {
         return;

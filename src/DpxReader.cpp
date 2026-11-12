@@ -216,7 +216,7 @@ QImage applyOrientation(const QImage &image, int orientation)
     }
 }
 
-QImage decode(const uchar *data, qint64 size, QString *error)
+QImage decode(const uchar *data, qint64 size, QString *error, const QSize &targetSize)
 {
     if (size < HeaderSize) {
         fail(error, QStringLiteral("File is too small to be a DPX image."));
@@ -279,28 +279,37 @@ QImage decode(const uchar *data, qint64 size, QString *error)
         endOfLinePadding = 0;
     }
 
+
+    // Subsampling step for previews: the largest step that still gives at least targetSize.
+    quint32 step = 1;
+    if (targetSize.isValid() && targetSize.width() > 0 && targetSize.height() > 0) {
+        step = qMax(1u, qMin(width / quint32(targetSize.width()), height / quint32(targetSize.height())));
+    }
+    const quint32 outWidth = (width + step - 1) / step;
+    const quint32 outHeight = (height + step - 1) / step;
+
     const int valuesPerLine = int(width) * components;
-    QImage image(int(width), int(height), components == 4 ? QImage::Format_ARGB32 : QImage::Format_RGB32);
+    QImage image(int(outWidth), int(outHeight), components == 4 ? QImage::Format_ARGB32 : QImage::Format_RGB32);
     if (image.isNull()) {
         fail(error, QStringLiteral("Not enough memory for the DPX image."));
         return QImage();
     }
 
     const qint64 lineBytes = lineByteCount(valuesPerLine, bitSize, packing);
+    const qint64 lineStride = lineBytes + endOfLinePadding;
     std::vector<quint16> values;
-    qint64 offset = dataOffset;
-    for (quint32 y = 0; y < height; ++y) {
+    for (quint32 outY = 0; outY < outHeight; ++outY) {
+        const qint64 offset = qint64(dataOffset) + qint64(outY) * step * lineStride;
         if (!reader.has(offset, lineBytes)) {
             fail(error, QStringLiteral("DPX file is truncated."));
             return QImage();
         }
 
         decodeLine(reader, offset, valuesPerLine, bitSize, packing, values);
-        offset += lineBytes + endOfLinePadding;
 
-        auto *line = reinterpret_cast<QRgb *>(image.scanLine(int(y)));
-        for (quint32 x = 0; x < width; ++x) {
-            const quint16 *v = values.data() + size_t(x) * size_t(components);
+        auto *line = reinterpret_cast<QRgb *>(image.scanLine(int(outY)));
+        for (quint32 outX = 0; outX < outWidth; ++outX) {
+            const quint16 *v = values.data() + size_t(outX) * step * size_t(components);
             int r = 0;
             int g = 0;
             int b = 0;
@@ -336,7 +345,7 @@ QImage decode(const uchar *data, qint64 size, QString *error)
                 r = g = b = v[0] >> 8;
                 break;
             }
-            line[x] = qRgba(r, g, b, a);
+            line[outX] = qRgba(r, g, b, a);
         }
     }
 
@@ -352,7 +361,7 @@ bool isDpxFile(const QString &filePath)
     return QFileInfo(filePath).suffix().compare(QStringLiteral("dpx"), Qt::CaseInsensitive) == 0;
 }
 
-QImage read(const QString &filePath, QString *error)
+QImage read(const QString &filePath, QString *error, const QSize &targetSize)
 {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -362,13 +371,13 @@ QImage read(const QString &filePath, QString *error)
 
     const qint64 size = file.size();
     if (uchar *mapped = file.map(0, size)) {
-        const QImage image = decode(mapped, size, error);
+        const QImage image = decode(mapped, size, error, targetSize);
         file.unmap(mapped);
         return image;
     }
 
     const QByteArray bytes = file.readAll();
-    return decode(reinterpret_cast<const uchar *>(bytes.constData()), bytes.size(), error);
+    return decode(reinterpret_cast<const uchar *>(bytes.constData()), bytes.size(), error, targetSize);
 }
 
 } // namespace Dpx

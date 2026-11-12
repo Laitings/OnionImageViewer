@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QSize>
 #include <QString>
 
 // Minimal reader for SMPTE 268M DPX files, the common film/VFX cases:
@@ -11,6 +12,8 @@ namespace Dpx {
 bool isDpxFile(const QString &filePath);
 
 // Reads the first image element. On failure returns a null image and sets error.
-QImage read(const QString &filePath, QString *error = nullptr);
+// With a target size, only every Nth line and pixel is decoded so the result is at least that
+// big (but not much bigger): a fast preview for thumbnails.
+QImage read(const QString &filePath, QString *error = nullptr, const QSize &targetSize = QSize());
 
 } // namespace Dpx
