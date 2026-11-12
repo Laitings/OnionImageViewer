@@ -15,6 +15,17 @@ enum class View {
     CustomLut,     // a .cube LUT file loaded with loadLut()
 };
 
+// What the stored values are, for floating-point (EXR) images. ACES footage is first converted
+// to the log encoding the view expects (LogC4 for the LogC4 and LUT views, LogC3 for LogC3), the
+// way a VFX house's "ACES to LogC4" DCTL does, or to linear Rec.709 for the None view.
+// Integer images (DPX, TIFF, ...) are always taken as stored.
+enum class Input {
+    Auto,     // from the file's tags (EXR chromaticities / ACES flag), otherwise as stored
+    AsStored, // camera log or plain linear/sRGB values
+    Aces2065, // ACES2065-1: AP0 primaries, scene linear
+    AcesCg,   // ACEScg: AP1 primaries, scene linear
+};
+
 QString displayName(View view);
 QString settingsKey(View view);
 View fromSettingsKey(const QString &key);
@@ -30,6 +41,16 @@ bool loadLut(const QString &filePath, QString *error = nullptr);
 bool hasLut();
 QString lutFilePath();
 
-QImage toDisplay(const QImage &source, View view);
+QString inputDisplayName(Input input);
+QString inputSettingsKey(Input input);
+Input inputFromSettingsKey(const QString &key);
+
+// Image text key readers use to tag what they know about an image's values.
+inline QString colorSpaceTextKey() { return QStringLiteral("ColorSpace"); }
+
+// Turns Auto into the input the image is tagged with (AsStored when untagged).
+Input resolveInput(Input input, const QImage &source);
+
+QImage toDisplay(const QImage &source, View view, Input input = Input::AsStored);
 
 } // namespace ColorTransform

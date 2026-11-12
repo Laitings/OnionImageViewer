@@ -2,9 +2,13 @@
 
 #include <QFileInfo>
 
+#include "ColorTransform.h"
+
 #ifdef ONION_HAVE_OPENEXR
 #include <ImfArray.h>
 #include <ImfChannelList.h>
+#include <ImfChromaticitiesAttribute.h>
+#include <ImfIntAttribute.h>
 #include <ImfHeader.h>
 #include <ImfPreviewImage.h>
 #include <ImfRgbaFile.h>
@@ -13,6 +17,7 @@
 
 #include <QByteArray>
 
+#include <cmath>
 #include <exception>
 #include <set>
 #include <string>
@@ -51,6 +56,32 @@ std::string displayLayer(const Imf::Header &header)
         }
     }
     return std::string();
+}
+
+// Tags ACES files so the viewer can convert them: the ACES container flag or ACES AP0/AP1
+// chromaticities. Camera tags such as ARRI's tech_details_gamma_space are not trusted, because
+// compositing apps copy them over from the plate even when they write ACES linear.
+QString colorSpaceTag(const Imf::Header &header)
+{
+    auto near = [](const Imath::V2f &a, float x, float y) {
+        return std::abs(a.x - x) < 0.002f && std::abs(a.y - y) < 0.002f;
+    };
+    if (const auto *chroma = header.findTypedAttribute<Imf::ChromaticitiesAttribute>("chromaticities")) {
+        const Imf::Chromaticities &c = chroma->value();
+        if (near(c.red, 0.7347f, 0.2653f) && near(c.green, 0.0f, 1.0f) && near(c.blue, 0.0001f, -0.077f)) {
+            return ColorTransform::inputSettingsKey(ColorTransform::Input::Aces2065);
+        }
+        if (near(c.red, 0.713f, 0.293f) && near(c.green, 0.165f, 0.830f) && near(c.blue, 0.128f, 0.044f)) {
+            return ColorTransform::inputSettingsKey(ColorTransform::Input::AcesCg);
+        }
+        return QString();
+    }
+    if (const auto *flag = header.findTypedAttribute<Imf::IntAttribute>("acesImageContainerFlag")) {
+        if (flag->value() == 1) {
+            return ColorTransform::inputSettingsKey(ColorTransform::Input::Aces2065);
+        }
+    }
+    return QString();
 }
 
 QImage previewImage(const Imf::Header &header)
@@ -148,6 +179,10 @@ QImage read(const QString &filePath, QString *error, bool preferPreview)
             return QImage();
         }
         image.fill(Qt::black);
+        const QString tag = colorSpaceTag(header);
+        if (!tag.isEmpty()) {
+            image.setText(ColorTransform::colorSpaceTextKey(), tag);
+        }
         const int firstY = qMax(frame.min.y, dataWindow.min.y);
         const int lastY = qMin(frame.max.y, dataWindow.max.y);
         const int firstX = qMax(frame.min.x, dataWindow.min.x);
