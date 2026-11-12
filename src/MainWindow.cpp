@@ -903,6 +903,9 @@ void MainWindow::setFolderPanelVisible(bool visible)
     }
 
     m_folderTreePanel->setVisible(visible);
+    if (visible && !m_currentFolderPath.isEmpty()) {
+        m_folderTreePanel->showFolder(m_currentFolderPath);
+    }
     if (m_toggleFoldersAction->isChecked() != visible) {
         m_toggleFoldersAction->setChecked(visible);
     }
@@ -995,6 +998,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
 
     showGrid();
     updateBackAction();
+    if (m_folderTreePanel && m_folderTreePanel->isVisible()) {
+        m_folderTreePanel->showFolder(folderPath);
+    }
     QTimer::singleShot(0, this, &MainWindow::scheduleVisibleThumbnails);
     m_thumbnailScheduleTimer.start(250);
 }

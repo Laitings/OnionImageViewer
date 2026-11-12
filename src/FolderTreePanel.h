@@ -15,6 +15,10 @@ class FolderTreePanel final : public QWidget
 public:
     explicit FolderTreePanel(QWidget *parent = nullptr);
 
+    // Selects and reveals a folder in the tree without emitting folderSelected (for following
+    // navigation done elsewhere, e.g. in the file grid).
+    void showFolder(const QString &folderPath);
+
 signals:
     void folderSelected(const QString &folderPath);
 
