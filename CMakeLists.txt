@@ -59,6 +59,19 @@ target_link_libraries(OnionImageViewer
         Qt6::Widgets
 )
 
+# App logo: the PNG is built in for the window icon and the About box; the .ico becomes the
+# .exe's icon on Windows.
+qt_add_resources(OnionImageViewer "app_icons"
+    PREFIX "/"
+    BASE resources
+    FILES
+        resources/icons/OnionImageViewer.png
+        resources/icons/OnionImageViewer.svg
+)
+if(WIN32)
+    target_sources(OnionImageViewer PRIVATE resources/OnionImageViewer.rc)
+endif()
+
 # EXR support is optional: without OpenEXR the viewer still builds, just without .exr files.
 find_package(OpenEXR CONFIG QUIET)
 if(OpenEXR_FOUND)

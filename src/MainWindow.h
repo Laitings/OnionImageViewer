@@ -51,6 +51,9 @@ private:
     void setViewTransform(ColorTransform::View view);
     void updateViewTransformActions();
     void chooseLutFile();
+    void showAbout();
+    void setInput(ColorTransform::Input input);
+    void updateInputActions();
     void useLutFile(const QString &filePath);
     void updateLutActions();
     void updateViewTransformActions(ColorTransform::View view);
@@ -90,6 +93,8 @@ private:
     QAction *m_customLutAction = nullptr;
     QAction *m_loadLutAction = nullptr;
     QMenu *m_recentLutsMenu = nullptr;
+    QActionGroup *m_inputGroup = nullptr;
+    ColorTransform::Input m_input = ColorTransform::Input::Auto;
     ColorTransform::View m_view = ColorTransform::View::None;
     QImage m_currentSourceImage;
     QString m_currentFolderPath;

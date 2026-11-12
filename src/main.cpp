@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 
 int main(int argc, char *argv[])
 {
@@ -9,6 +10,7 @@ int main(int argc, char *argv[])
 
     QCoreApplication::setOrganizationName(QStringLiteral("OnionImageViewer"));
     QCoreApplication::setApplicationName(QStringLiteral("OnionImageViewer"));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")));
 
     MainWindow window;
     window.show();

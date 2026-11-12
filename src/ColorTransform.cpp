@@ -51,6 +51,35 @@ float logC4ToLinear(float t)
     return static_cast<float>(t * s + tt);
 }
 
+// Scene linear -> ARRI LogC3 (EI 800) code value.
+float linearToLogC3(float x)
+{
+    constexpr float cut = 0.010591f;
+    constexpr float a = 5.555556f;
+    constexpr float b = 0.052272f;
+    constexpr float c = 0.247190f;
+    constexpr float d = 0.385537f;
+    constexpr float e = 5.367655f;
+    constexpr float f = 0.092809f;
+    return x > cut ? c * std::log10(a * x + b) + d : e * x + f;
+}
+
+// Scene linear -> ARRI LogC4 code value.
+float linearToLogC4(float x)
+{
+    static const float a = static_cast<float>((std::pow(2.0, 18.0) - 16.0) / 117.45);
+    static const float b = static_cast<float>((1023.0 - 95.0) / 1023.0);
+    static const float c = static_cast<float>(95.0 / 1023.0);
+    static const float s = static_cast<float>((7.0 * std::log(2.0) * std::pow(2.0, 7.0 - 14.0 * (95.0 / 1023.0) / ((1023.0 - 95.0) / 1023.0)))
+                                              / (((std::pow(2.0, 18.0) - 16.0) / 117.45) * ((1023.0 - 95.0) / 1023.0)));
+    static const float t = static_cast<float>((std::pow(2.0, 14.0 * (-(95.0 / 1023.0) / ((1023.0 - 95.0) / 1023.0)) + 6.0) - 64.0)
+                                              / ((std::pow(2.0, 18.0) - 16.0) / 117.45));
+    if (x >= t) {
+        return (std::log2(qMax(a * x + 64.0f, 1e-6f)) - 6.0f) / 14.0f * b + c;
+    }
+    return (x - t) / s + c;
+}
+
 // ---- Gamut ----------------------------------------------------------------------------------
 
 using Matrix = std::array<float, 9>;
@@ -67,6 +96,40 @@ constexpr Matrix Awg4ToRec709 = {
     -0.0127088f, -0.1522214f, 1.1651702f,
 };
 constexpr Matrix Identity = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+
+// ACES (AP0 / AP1, ACES white) -> AWG4 / AWG3 / Rec.709 (D65). AP0 -> AWG4 is the matrix from
+// the ARRI/VFX "AP0 Linear to ARRI LogC4" DCTL; the others are derived from the primaries with a
+// CAT02 white point adaptation.
+constexpr Matrix Ap0ToAwg4 = {
+    1.328523584f, -0.190906551f, -0.137617033f,
+    -0.001087250f, 0.992641938f, 0.008445313f,
+    0.000664054f, 0.001132192f, 0.998203754f,
+};
+constexpr Matrix Ap0ToAwg3 = {
+    1.515986008f, -0.361341757f, -0.154644251f,
+    -0.128327275f, 1.019314554f, 0.109012721f,
+    -0.010510203f, 0.060833202f, 0.949677001f,
+};
+constexpr Matrix Ap0ToRec709 = {
+    2.521934730f, -1.137023897f, -0.384910833f,
+    -0.275479428f, 1.369828979f, -0.094349551f,
+    -0.015982870f, -0.147789234f, 1.163772104f,
+};
+constexpr Matrix Ap1ToAwg4 = {
+    0.918387668f, 0.022549182f, 0.059063150f,
+    0.043675423f, 0.853378761f, 0.102945816f,
+    -0.005022625f, 0.004758976f, 1.000263649f,
+};
+constexpr Matrix Ap1ToAwg3 = {
+    1.038964267f, -0.097990613f, 0.059026346f,
+    -0.044188132f, 0.858661168f, 0.185526964f,
+    -0.009832151f, 0.054640635f, 0.955191516f,
+};
+constexpr Matrix Ap1ToRec709 = {
+    1.705079644f, -0.624233461f, -0.080846182f,
+    -0.129700530f, 1.138468547f, -0.008768016f,
+    -0.024166345f, -0.124614158f, 1.148780503f,
+};
 
 // ---- Output ---------------------------------------------------------------------------------
 
@@ -469,6 +532,69 @@ QImage applyLut(const QImage &input, bool floatSource, const CubeLut &lut)
     return result;
 }
 
+// Converts ACES scene-linear values (half floats) to what the view expects: a camera log
+// encoding, or linear Rec.709 for the None view. Like the usual ACES-to-LogC DCTLs, negative
+// values are clamped before and after the matrix.
+QImage convertAces(const QImage &input, View view, ColorTransform::Input aces)
+{
+    const bool ap0 = aces == ColorTransform::Input::Aces2065;
+    const Matrix *matrix = nullptr;
+    float (*encode)(float) = nullptr;
+    switch (view) {
+    case View::LogC3ToRec709:
+        matrix = ap0 ? &Ap0ToAwg3 : &Ap1ToAwg3;
+        encode = linearToLogC3;
+        break;
+    case View::LogC4ToRec709:
+    case View::CustomLut:
+        matrix = ap0 ? &Ap0ToAwg4 : &Ap1ToAwg4;
+        encode = linearToLogC4;
+        break;
+    case View::None:
+        matrix = ap0 ? &Ap0ToRec709 : &Ap1ToRec709;
+        break;
+    }
+    const Matrix &m = *matrix;
+    const bool clamp = encode != nullptr;
+
+    const int width = input.width();
+    const int height = input.height();
+    QImage result(width, height, QImage::Format_RGBX16FPx4);
+    if (result.isNull()) {
+        return result;
+    }
+    forEachRow(height, qint64(width) * height, [&](int y) {
+        const auto *in = reinterpret_cast<const qfloat16 *>(input.constScanLine(y));
+        auto *out = reinterpret_cast<qfloat16 *>(result.scanLine(y));
+        for (int x = 0; x < width; ++x) {
+            float r = static_cast<float>(in[x * 4 + 0]);
+            float g = static_cast<float>(in[x * 4 + 1]);
+            float b = static_cast<float>(in[x * 4 + 2]);
+            if (!std::isfinite(r)) r = 0.0f;
+            if (!std::isfinite(g)) g = 0.0f;
+            if (!std::isfinite(b)) b = 0.0f;
+            if (clamp) {
+                r = qMax(r, 0.0f);
+                g = qMax(g, 0.0f);
+                b = qMax(b, 0.0f);
+            }
+            float r2 = m[0] * r + m[1] * g + m[2] * b;
+            float g2 = m[3] * r + m[4] * g + m[5] * b;
+            float b2 = m[6] * r + m[7] * g + m[8] * b;
+            if (encode) {
+                r2 = encode(qMax(r2, 0.0f));
+                g2 = encode(qMax(g2, 0.0f));
+                b2 = encode(qMax(b2, 0.0f));
+            }
+            out[x * 4 + 0] = qfloat16(r2);
+            out[x * 4 + 1] = qfloat16(g2);
+            out[x * 4 + 2] = qfloat16(b2);
+            out[x * 4 + 3] = qfloat16(1.0f);
+        }
+    });
+    return result;
+}
+
 } // namespace
 
 namespace ColorTransform {
@@ -526,6 +652,61 @@ QString cacheKey(View view)
     return settingsKey(view) + QStringLiteral("|v2");
 }
 
+QString inputDisplayName(Input input)
+{
+    switch (input) {
+    case Input::Auto:
+        return QStringLiteral("Auto (from file tags)");
+    case Input::AsStored:
+        return QStringLiteral("Camera log / as stored");
+    case Input::Aces2065:
+        return QStringLiteral("ACES2065-1 linear (AP0)");
+    case Input::AcesCg:
+        return QStringLiteral("ACEScg linear (AP1)");
+    }
+    return QString();
+}
+
+QString inputSettingsKey(Input input)
+{
+    switch (input) {
+    case Input::Auto:
+        return QStringLiteral("auto");
+    case Input::AsStored:
+        return QStringLiteral("stored");
+    case Input::Aces2065:
+        return QStringLiteral("aces2065");
+    case Input::AcesCg:
+        return QStringLiteral("acescg");
+    }
+    return QString();
+}
+
+Input inputFromSettingsKey(const QString &key)
+{
+    for (Input input : {Input::AsStored, Input::Aces2065, Input::AcesCg}) {
+        if (key == inputSettingsKey(input)) {
+            return input;
+        }
+    }
+    return Input::Auto;
+}
+
+Input resolveInput(Input input, const QImage &source)
+{
+    if (input != Input::Auto) {
+        return input;
+    }
+    const QString tag = source.text(colorSpaceTextKey());
+    if (tag == inputSettingsKey(Input::Aces2065)) {
+        return Input::Aces2065;
+    }
+    if (tag == inputSettingsKey(Input::AcesCg)) {
+        return Input::AcesCg;
+    }
+    return Input::AsStored;
+}
+
 bool loadLut(const QString &filePath, QString *error)
 {
     std::shared_ptr<CubeLut> lut = parseCube(filePath, error);
@@ -548,7 +729,7 @@ QString lutFilePath()
     return lut ? lut->filePath : QString();
 }
 
-QImage toDisplay(const QImage &source, View view)
+QImage toDisplay(const QImage &source, View view, Input inputSpace)
 {
     if (source.isNull()) {
         return source;
@@ -570,8 +751,12 @@ QImage toDisplay(const QImage &source, View view)
     }
 
     // Work from 16-bit values: half floats keep their bit patterns, integers are widened to 16 bit.
-    const QImage input = floatSource ? source.convertToFormat(QImage::Format_RGBX16FPx4)
-                                     : source.convertToFormat(QImage::Format_RGBX64);
+    QImage input = floatSource ? source.convertToFormat(QImage::Format_RGBX16FPx4)
+                               : source.convertToFormat(QImage::Format_RGBX64);
+    const Input resolved = resolveInput(inputSpace, source);
+    if (floatSource && (resolved == Input::Aces2065 || resolved == Input::AcesCg)) {
+        input = convertAces(input, view, resolved);
+    }
     if (lut) {
         return applyLut(input, floatSource, *lut);
     }

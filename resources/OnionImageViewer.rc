@@ -1,0 +1,2 @@
+// Windows resources: the icon Explorer, the taskbar and shortcuts show for the .exe.
+IDI_ICON1 ICON "icons/OnionImageViewer.ico"

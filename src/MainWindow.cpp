@@ -62,6 +62,7 @@ const QString SettingsMainWindowGeometry = QStringLiteral("mainWindow/geometry")
 const QString SettingsMainWindowState = QStringLiteral("mainWindow/state");
 const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
 const QString SettingsViewTransform = QStringLiteral("view/colorTransform");
+const QString SettingsInput = QStringLiteral("view/input");
 const QString SettingsLutFile = QStringLiteral("view/lutFile");
 const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
 const int MaxRecentLuts = 8;
@@ -102,7 +103,7 @@ QString thumbnailCacheDirectory()
     return cacheDirectory;
 }
 
-QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view)
+QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view, ColorTransform::Input input)
 {
     QString cacheKeySource = fileInfo.absoluteFilePath()
         + QStringLiteral("|")
@@ -111,6 +112,9 @@ QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view)
         + QString::number(fileInfo.lastModified().toMSecsSinceEpoch());
     if (view != ColorTransform::View::None) {
         cacheKeySource += QStringLiteral("|") + ColorTransform::cacheKey(view);
+    }
+    if (input != ColorTransform::Input::AsStored) {
+        cacheKeySource += QStringLiteral("|in=") + ColorTransform::inputSettingsKey(input);
     }
 
     const QByteArray cacheKey = QCryptographicHash::hash(cacheKeySource.toUtf8(), QCryptographicHash::Sha256).toHex();
@@ -235,28 +239,30 @@ void saveThumbnailToCache(const QImage &thumbnail, const QString &cachePath)
 
 // Turns a full-precision image (DPX/EXR) into a display thumbnail: shrink it cheaply first so the
 // colour transform only touches a small image, then apply the view and scale smoothly.
-QImage displayThumbnail(const QImage &source, ColorTransform::View view)
+QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTransform::Input input)
 {
     if (source.isNull()) {
         return source;
     }
+    // Resolve Auto from the full image: scaling doesn't keep the file's tags.
+    input = ColorTransform::resolveInput(input, source);
     QImage reduced = source;
     const QSize roughSize = ThumbnailSize * 2;
     if (reduced.width() > roughSize.width() || reduced.height() > roughSize.height()) {
         reduced = reduced.scaled(roughSize, Qt::KeepAspectRatio, Qt::FastTransformation);
     }
-    return ColorTransform::toDisplay(reduced, view)
+    return ColorTransform::toDisplay(reduced, view, input)
         .scaled(ThumbnailSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view)
+QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input)
 {
     if (Exr::isExrFile(filePath)) {
-        return displayThumbnail(Exr::read(filePath, nullptr, true), view);
+        return displayThumbnail(Exr::read(filePath, nullptr, true), view, input);
     }
 
     if (Dpx::isDpxFile(filePath)) {
-        return displayThumbnail(Dpx::read(filePath, nullptr, ThumbnailSize), view);
+        return displayThumbnail(Dpx::read(filePath, nullptr, ThumbnailSize), view, input);
     }
 
     QImageReader reader(filePath);
@@ -271,11 +277,11 @@ QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View vie
     return view == ColorTransform::View::None ? image : ColorTransform::toDisplay(image, view);
 }
 
-QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, bool *pending)
+QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, bool *pending)
 {
     *pending = false;
     const QFileInfo fileInfo(filePath);
-    const QString cachePath = thumbnailCachePath(fileInfo, view);
+    const QString cachePath = thumbnailCachePath(fileInfo, view, input);
 
     QImage thumbnail;
     if (thumbnail.load(cachePath)) {
@@ -307,7 +313,7 @@ QImage loadThumbnailImage(const QString &filePath, ColorTransform::View view, bo
 #endif
 
     if (thumbnail.isNull()) {
-        thumbnail = readerThumbnailForImage(filePath, view);
+        thumbnail = readerThumbnailForImage(filePath, view, input);
     }
 
     if (!thumbnail.isNull()) {
@@ -425,6 +431,19 @@ void MainWindow::createActions()
         }
     }
 
+    // Input: what EXR values are (ACES comps need converting to the camera log first).
+    m_inputGroup = new QActionGroup(this);
+    m_inputGroup->setExclusive(true);
+    for (ColorTransform::Input input : {ColorTransform::Input::Auto, ColorTransform::Input::AsStored,
+                                        ColorTransform::Input::Aces2065, ColorTransform::Input::AcesCg}) {
+        auto *action = new QAction(ColorTransform::inputDisplayName(input), m_inputGroup);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(input));
+        connect(action, &QAction::triggered, this, [this, input]() {
+            setInput(input);
+        });
+    }
+
     m_loadLutAction = new QAction(QStringLiteral("Load LUT File…"), this);
     m_loadLutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_L));
     connect(m_loadLutAction, &QAction::triggered, this, &MainWindow::chooseLutFile);
@@ -450,6 +469,26 @@ void MainWindow::createMenus()
     colorMenu->addSeparator();
     colorMenu->addAction(m_loadLutAction);
     m_recentLutsMenu = colorMenu->addMenu(QStringLiteral("Recent LUTs"));
+    colorMenu->addSeparator();
+    QMenu *inputMenu = colorMenu->addMenu(QStringLiteral("EXR Input"));
+    inputMenu->setToolTipsVisible(true);
+    inputMenu->addActions(m_inputGroup->actions());
+
+    QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("Help"));
+    helpMenu->addAction(QStringLiteral("About OnionImageViewer"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::showAbout()
+{
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("About OnionImageViewer"));
+    box.setIconPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
+    box.setTextFormat(Qt::RichText);
+    box.setText(QStringLiteral("<h3>OnionImageViewer</h3>"
+                               "<p>Image viewer and batch converter.</p>"
+                               "<p>Built with Qt %1.</p>")
+                    .arg(QString::fromLatin1(qVersion())));
+    box.exec();
 }
 
 void MainWindow::createToolbar()
@@ -595,8 +634,10 @@ void MainWindow::loadSettings()
     if (m_view == ColorTransform::View::CustomLut && !ColorTransform::hasLut()) {
         m_view = ColorTransform::View::None;
     }
+    m_input = ColorTransform::inputFromSettingsKey(settings.value(SettingsInput).toString());
     updateLutActions();
     updateViewTransformActions();
+    updateInputActions();
 }
 
 void MainWindow::saveSettings()
@@ -639,7 +680,7 @@ void MainWindow::openImagePath(const QString &filePath)
     }
 
     m_currentSourceImage = result.image;
-    m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view));
+    m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input));
     if (m_currentImagePaths.isEmpty()) {
         m_currentImagePaths.append(filePath);
         m_currentImageIndex = 0;
@@ -675,9 +716,28 @@ void MainWindow::setViewTransform(ColorTransform::View view)
     statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(view)), 3000);
 
     if (!m_currentSourceImage.isNull()) {
-        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view), true);
+        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
     }
     resetThumbnails();
+}
+
+void MainWindow::setInput(ColorTransform::Input input)
+{
+    m_input = input;
+    updateInputActions();
+    QSettings().setValue(SettingsInput, ColorTransform::inputSettingsKey(input));
+    statusBar()->showMessage(QStringLiteral("EXR input: %1").arg(ColorTransform::inputDisplayName(input)), 3000);
+    if (!m_currentSourceImage.isNull()) {
+        m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
+    }
+    resetThumbnails();
+}
+
+void MainWindow::updateInputActions()
+{
+    for (QAction *action : m_inputGroup->actions()) {
+        action->setChecked(action->data().toInt() == static_cast<int>(m_input));
+    }
 }
 
 void MainWindow::chooseLutFile()
@@ -718,7 +778,7 @@ void MainWindow::useLutFile(const QString &filePath)
         // Same view, new LUT: re-render explicitly.
         statusBar()->showMessage(QStringLiteral("Color: %1").arg(ColorTransform::displayName(m_view)), 3000);
         if (!m_currentSourceImage.isNull()) {
-            m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view), true);
+            m_imageViewport->setImage(ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input), true);
         }
         resetThumbnails();
     } else {
@@ -1033,11 +1093,12 @@ void MainWindow::requestThumbnail(QListWidgetItem *item, int priority)
 
     const int generation = m_thumbnailGeneration;
     const ColorTransform::View view = m_view;
+    const ColorTransform::Input input = m_input;
     m_pendingThumbnailPaths.insert(filePath);
 
-    m_thumbnailPool.start([this, filePath, generation, view]() {
+    m_thumbnailPool.start([this, filePath, generation, view, input]() {
         bool pending = false;
-        const QImage thumbnail = loadThumbnailImage(filePath, view, &pending);
+        const QImage thumbnail = loadThumbnailImage(filePath, view, input, &pending);
         QMetaObject::invokeMethod(
             this,
             [this, filePath, generation, thumbnail, pending]() {
