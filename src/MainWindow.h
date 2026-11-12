@@ -25,6 +25,8 @@ class QMenu;
 class QToolButton;
 class QPushButton;
 class PathBar;
+class MetadataPanel;
+class QDockWidget;
 class QKeyEvent;
 class QDragEnterEvent;
 class QDropEvent;
@@ -115,6 +117,8 @@ private:
     void showInExplorer(const QString &path);
     void showGridContextMenu(const QPoint &pos);
     QString currentPath() const;
+    void scheduleMetadata();
+    void loadMetadata();
 
     std::shared_ptr<ImageLoader> m_imageLoader;
     FrameLoader *m_frameLoader = nullptr;
@@ -131,6 +135,12 @@ private:
     QAction *m_copyPathAction = nullptr;
     QAction *m_showInExplorerAction = nullptr;
     QList<QWidget *> m_hiddenForFullScreen;
+    MetadataPanel *m_metadataPanel = nullptr;
+    QDockWidget *m_metadataDock = nullptr;
+    QAction *m_metadataAction = nullptr;
+    QTimer m_metadataTimer;
+    QThreadPool m_metadataPool;
+    int m_metadataGeneration = 0;
     bool m_wasMaximized = false;
     QTimer m_playTimer;
     QImage m_currentDisplayImage;
