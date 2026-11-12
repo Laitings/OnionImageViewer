@@ -58,6 +58,8 @@ qt_add_executable(OnionImageViewer
     src/MetadataPanel.cpp
     src/FrameLoader.h
     src/FrameLoader.cpp
+    src/OverlayButton.h
+    src/OverlayButton.cpp
     src/PathBar.h
     src/PathBar.cpp
 )
