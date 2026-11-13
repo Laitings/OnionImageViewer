@@ -40,25 +40,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\Qt
-          key: qt-${{ runner.os }}-${{ env.QT_VERSION }}-msvc2022_64-imageformats-v2
+          key: qt-${{ runner.os }}-${{ env.QT_VERSION }}-msvc2022_64-imageformats-pdf-v3
 
       # Qt 6.11's online repository is split per compiler (qt6_6111/qt6_6111_msvc2022_64/...),
       # which aqtinstall can't read yet, so the archives are fetched from Updates.xml directly and
-      # checked against Qt's .sha1 files.
+      # checked against Qt's .sha1 files: qtbase, Qt Image Formats and the Qt PDF extension.
       - name: Install Qt
         if: steps.qt-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $ProgressPreference = 'SilentlyContinue'
           $v = $env:QT_VERSION; $vv = $v -replace '\.', ''
-          $base = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_$vv/qt6_${vv}_msvc2022_64"
-          $packages = @("qt.qt6.$vv.win64_msvc2022_64", "qt.qt6.$vv.addons.qtimageformats.win64_msvc2022_64")
-          Invoke-WebRequest "$base/Updates.xml" -OutFile (Join-Path $env:RUNNER_TEMP "Updates.xml") -UseBasicParsing
-          [xml]$updates = Get-Content (Join-Path $env:RUNNER_TEMP "Updates.xml") -Raw
+          $repo = "https://download.qt.io/online/qtsdkrepository/windows_x86"
+          $sources = @(
+            @{ Base = "$repo/desktop/qt6_$vv/qt6_${vv}_msvc2022_64"; Name = "qt.qt6.$vv.win64_msvc2022_64" },
+            @{ Base = "$repo/desktop/qt6_$vv/qt6_${vv}_msvc2022_64"; Name = "qt.qt6.$vv.addons.qtimageformats.win64_msvc2022_64" },
+            @{ Base = "$repo/extensions/qtpdf/$vv/msvc2022_64"; Name = "extensions.qtpdf.$vv.win64_msvc2022_64" }
+          )
           $out = "${{ github.workspace }}\Qt"
           $dl = Join-Path $env:RUNNER_TEMP "qt-archives"
           New-Item -ItemType Directory -Force $out, $dl | Out-Null
-          foreach ($name in $packages) {
+          foreach ($source in $sources) {
+            $base = $source.Base; $name = $source.Name
+            $xmlFile = Join-Path $dl ("Updates-" + ($base -replace '[^A-Za-z0-9]', '_') + ".xml")
+            if (-not (Test-Path $xmlFile)) { Invoke-WebRequest "$base/Updates.xml" -OutFile $xmlFile -UseBasicParsing }
+            [xml]$updates = Get-Content $xmlFile -Raw
             $pkg = $updates.Updates.PackageUpdate | Where-Object { $_.Name -eq $name }
             if (-not $pkg) { throw "Package $name not in $base/Updates.xml" }
             foreach ($archive in ($pkg.DownloadableArchives -split ',\s*' | Where-Object { $_ })) {
@@ -85,6 +91,7 @@ jobs:
           if (-not (Test-Path "$qtDir\bin\qt.conf")) { "[Paths]`nPrefix=.." | Set-Content "$qtDir\bin\qt.conf" }
           "QT_ROOT_DIR=$qtDir" >> $env:GITHUB_ENV
           Write-Host "Qt: $qtDir"
+          Write-Host "Qt PDF: $(Test-Path "$qtDir\bin\Qt6Pdf.dll")"
           Get-ChildItem "$qtDir\plugins\imageformats" | ForEach-Object { Write-Host "  imageformats: $($_.Name)" }
 
       # vcpkg checked out in full, so the builtin-baseline pinned in vcpkg.json resolves.
