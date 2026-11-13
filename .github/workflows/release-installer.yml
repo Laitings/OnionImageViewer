@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  QT_VERSION: "6.11.1"   # same Qt as the work PC; aqt could not find the 6.11.3 metadata
+  QT_VERSION: "6.11.1"   # same Qt as the work PC
   VCPKG_ROOT: ${{ github.workspace }}\vcpkg
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
 
@@ -34,15 +34,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.QT_VERSION }}
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
-          modules: qtimageformats
-          cache: true
+          python-version: "3.12"
+
+      - name: Cache Qt
+        id: qt-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\Qt
+          key: qt-${{ runner.os }}-${{ env.QT_VERSION }}-msvc-imageformats
+
+      # aqtinstall straight from pip, picking whichever 64-bit MSVC build the Qt version offers.
+      - name: Install Qt
+        shell: pwsh
+        run: |
+          python -m pip install --quiet --upgrade aqtinstall
+          $archs = (python -m aqt list-qt windows desktop --arch $env:QT_VERSION) -split '\s+' | Where-Object { $_ }
+          Write-Host "Qt $env:QT_VERSION architectures: $($archs -join ', ')"
+          $arch = $archs | Where-Object { $_ -match '^win64_msvc\d+_64$' } | Sort-Object -Descending | Select-Object -First 1
+          if (-not $arch) { throw "No 64-bit MSVC build of Qt $env:QT_VERSION" }
+          Write-Host "Modules: $((python -m aqt list-qt windows desktop --modules $env:QT_VERSION $arch) -join ' ')"
+          if ("${{ steps.qt-cache.outputs.cache-hit }}" -ne "true") {
+            python -m aqt install-qt windows desktop $env:QT_VERSION $arch --outputdir "${{ github.workspace }}\Qt" --modules qtimageformats
+            if ($LASTEXITCODE -ne 0) { throw "aqt install-qt failed" }
+          }
+          $qtDir = Get-ChildItem "${{ github.workspace }}\Qt\$env:QT_VERSION" -Directory | Where-Object { Test-Path (Join-Path $_.FullName "bin\windeployqt.exe") } | Select-Object -First 1
+          if (-not $qtDir) { throw "Qt was not installed where expected" }
+          "QT_ROOT_DIR=$($qtDir.FullName)" >> $env:GITHUB_ENV
+          Write-Host "Qt: $($qtDir.FullName)"
 
       # vcpkg checked out in full, so the builtin-baseline pinned in vcpkg.json resolves.
       - name: Set up vcpkg
