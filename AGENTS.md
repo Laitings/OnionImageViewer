@@ -63,6 +63,12 @@ running the app on real files.
   and header metadata in `src/Metadata.cpp`.
 - User-visible settings persist through `QSettings` with keys defined as constants near the top
   of `MainWindow.cpp`.
+- The folder panel (`FolderTreePanel`) is two views stacked to look like one Explorer-style
+  pane: a `QTreeWidget` with the Quick access and This PC headings (pins are the children of
+  Quick access) and below it the `QFileSystemModel` drive tree, indented to sit under This PC.
+  Pins are stored by `MainWindow` (`folders/pinned`) whenever they change. Icons for pins come
+  from the shell only for folders on local fixed disks; never ask the shell for icons of network
+  or removable paths on the UI thread.
 - Batch files, PowerShell scripts and the Inno Setup script use CRLF line endings
   (`.gitattributes`).
 

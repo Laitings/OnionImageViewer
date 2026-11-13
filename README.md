@@ -14,7 +14,7 @@ the full file metadata, and export what you see with the view burned in.
   - **PDF and Illustrator** `.pdf` / `.ai`: rendered with the Qt PDF module. Optional at build time.
   - **EPS** `.eps` / `.epsf` / `.epsi`: rendered with Ghostscript when it is installed, otherwise the embedded preview is shown.
 - **Color views** (Color menu): None, Auto, ARRI LogC3 → Rec.709 and LogC4 → Rec.709 (built-in approximations, or ARRI's own `.cube` LUTs when they are found in `luts/` next to the .exe), and any `.cube` LUT you load. EXR input can be set to ACES2065-1 or ACEScg for ACES comps.
-- **File browser**: folder tree with quick locations, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
+- **File browser**: folder panel laid out like Explorer's navigation pane, with Quick access (pinned folders: pin and unpin from the right-click menus, drag to reorder; starts with OneDrive, Desktop, Downloads, Documents and Pictures) above This PC's drive tree, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in.
@@ -64,7 +64,7 @@ Notes:
 - vcpkg is picked up automatically from `VCPKG_ROOT`, or else from Visual Studio (`%VSINSTALLDIR%\VC\vcpkg`). It has to be set up when the build folder is first configured; a build folder made without it must be deleted and configured again.
 - ARRI's LogC3/LogC4 → Rec.709 `.cube` files from `resources/luts/arri` are copied into `luts/` next to the .exe, where the ARRI views use them instead of the built-in curves. `-DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri` takes them from another folder.
 - `-DONION_VERSION=1.2.0` sets the version the app shows (default: the CMake project version).
-- Settings (view mode, color view, recent files, folders) are kept with `QSettings` under `OnionImageViewer` in the registry.
+- Settings (view mode, color view, recent files, folders, pinned folders) are kept with `QSettings` under `OnionImageViewer` in the registry.
 
 ## Windows installer
 
@@ -99,7 +99,7 @@ src/
   main.cpp                QApplication setup, organisation/app name for QSettings
   MainWindow.*            the window: menus, actions, file grid, viewer page, thumbnails,
                           shortcuts, export, settings (the biggest file)
-  FolderTreePanel.*       folder tree and quick locations on the left
+  FolderTreePanel.*       folder panel on the left: Quick access pins and the drive tree
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
   FileItemDelegate.*      drawing of the Details and Tiles views
   FileOps.*               copy / cut / paste via the system clipboard, background file jobs

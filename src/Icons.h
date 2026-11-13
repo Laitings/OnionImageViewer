@@ -19,6 +19,10 @@ enum class Kind {
     ViewList,
     ViewDetails,
     ViewTiles,
+    QuickAccess, // a star, for the Quick access section of the folder panel
+    ThisPC,      // a monitor, for the drives section of the folder panel
+    Pin,
+    Unpin,
 };
 
 QIcon icon(Kind kind);
