@@ -85,6 +85,13 @@ running the app on real files.
   Pins are stored by `MainWindow` (`folders/pinned`) whenever they change. Icons for pins come
   from the shell only for folders on local fixed disks; never ask the shell for icons of network
   or removable paths on the UI thread.
+- The batch renamer is split in two: `BatchRename::` (`src/BatchRename.*`) plans the names and
+  carries out renames with no UI, and `BatchRenameDialog` only shows the options and preview.
+  `MainWindow::runRename` runs `BatchRename::apply` on `m_batchPool` and keeps each finished batch
+  in `m_renameHistory` for Undo Rename. Renames never overwrite: names taken by another file in
+  the batch go through a temporary name, and a failure rolls the whole batch back. Name checks
+  follow Windows rules (case-insensitive, no `<>:"/\|?*`, no reserved device names) on every
+  platform.
 - Batch files, PowerShell scripts and the Inno Setup script use CRLF line endings
   (`.gitattributes`).
 

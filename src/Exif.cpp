@@ -250,6 +250,38 @@ QString gpsCoordinate(const Tiff &tiff, const Field *value, const Field *referen
 
 } // namespace
 
+QDateTime dateTaken(const QByteArray &tiffData)
+{
+    QByteArray data = tiffData;
+    if (data.startsWith(QByteArray("Exif\0\0", 6))) {
+        data.remove(0, 6);
+    }
+    Tiff opened(data);
+    if (!opened.open()) {
+        return QDateTime();
+    }
+    const QList<Field> main = opened.ifd(opened.firstIfd());
+    QList<Field> exif;
+    if (const Field *pointer = findField(main, 0x8769)) {
+        exif = opened.ifd(static_cast<quint32>(opened.number(*pointer)));
+    }
+    const auto parse = [&](const QList<Field> &fields, quint16 tag) {
+        const Field *field = findField(fields, tag);
+        if (!field || field->type != Ascii) {
+            return QDateTime();
+        }
+        return QDateTime::fromString(opened.text(*field).left(19), QStringLiteral("yyyy:MM:dd HH:mm:ss"));
+    };
+    QDateTime when = parse(exif, 0x9003);
+    if (!when.isValid()) {
+        when = parse(exif, 0x9004);
+    }
+    if (!when.isValid()) {
+        when = parse(main, 0x0132);
+    }
+    return when;
+}
+
 QList<QPair<QString, QString>> describe(const QByteArray &tiffData)
 {
     QList<QPair<QString, QString>> facts;
