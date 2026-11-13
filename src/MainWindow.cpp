@@ -493,6 +493,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyDarkPalette();
     m_frameLoader = new FrameLoader(m_imageLoader, this);
     connect(m_frameLoader, &FrameLoader::frameReady, this, &MainWindow::showFrame);
+    connect(m_frameLoader, &FrameLoader::gifFrameReady, this, &MainWindow::showGifFrame);
     m_playTimer.setInterval(1000 / PlaybackFps);
     connect(&m_playTimer, &QTimer::timeout, this, &MainWindow::playbackTick);
     createActions();
@@ -1343,6 +1344,7 @@ void MainWindow::goToImage(int index)
     if (index < 0 || index >= m_currentImagePaths.size()) {
         return;
     }
+    m_frameLoader->stopGif();
     if (index != m_currentImageIndex && m_currentImageIndex >= 0) {
         m_stepDirection = index > m_currentImageIndex ? 1 : -1;
     }
@@ -1400,7 +1402,7 @@ void MainWindow::prefetchAround()
 
 void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
 {
-    if (!isViewerVisible() && !m_freshOpen) {
+    if (!isViewerVisible()) {
         return;
     }
     const int index = m_currentImagePaths.indexOf(frame.path);
@@ -1444,6 +1446,20 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     }
     updateColorButton(m_view);
     updateImageInfo();
+    updatePixelReadout(m_hoveredPixel);
+    if (requested && QFileInfo(frame.path).suffix().compare(QLatin1String("gif"), Qt::CaseInsensitive) == 0) {
+        m_frameLoader->startGif(frame.path);
+    }
+}
+
+void MainWindow::showGifFrame(const QImage &source, const QImage &display)
+{
+    m_currentSourceImage = source;
+    m_currentDisplayImage = display;
+    m_imageViewport->setImage(display, true);
+    if (m_compareMode == CompareNoView) {
+        updateCompare();
+    }
     updatePixelReadout(m_hoveredPixel);
 }
 
@@ -1915,6 +1931,7 @@ void MainWindow::exportImageAs()
         statusBar()->showMessage(QStringLiteral("Open an image first, then export it"), 4000);
         return;
     }
+    const QImage display = m_currentDisplayImage;
 
     struct Format
     {
@@ -2010,7 +2027,7 @@ void MainWindow::exportImageAs()
     if (format->writer == "tiff") {
         writer.setCompression(1); // LZW: lossless and much smaller than uncompressed
     }
-    QImage image = m_currentDisplayImage;
+    QImage image = display;
     if (format->writer == "jpeg" || format->writer == "bmp") {
         image = image.convertToFormat(QImage::Format_RGB888); // no alpha in these
     }
@@ -3071,6 +3088,7 @@ void MainWindow::updateBackAction()
 void MainWindow::showGrid()
 {
     stopPlayback();
+    m_frameLoader->stopGif();
     m_contentStack->setCurrentWidget(m_fileGrid);
     m_pixelLabel->clear();
     m_swatchLabel->hide();

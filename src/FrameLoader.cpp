@@ -2,14 +2,55 @@
 
 #include "ImageLoader.h"
 
+#include <QImageReader>
 #include <QMetaObject>
-#include <QThread>
+
+#include <utility>
 
 namespace {
 constexpr int PriorityRequested = 10;
 constexpr int PriorityPrefetch = 0;
 constexpr int MaxPrefetchJobs = 3;
 }
+
+// The reader stays on its worker thread. Reopening it at the end of a pass lets
+// long GIFs loop without keeping every decoded frame in memory.
+class FrameLoader::GifReader final : public QObject
+{
+public:
+    QImage read(const QString &path)
+    {
+        if (!path.isEmpty()) {
+            m_reader = std::make_unique<QImageReader>(path, QByteArrayLiteral("gif"));
+            if (m_reader->imageCount() < 2) {
+                reset();
+                return {};
+            }
+            m_repeats = m_reader->loopCount();
+        }
+        if (!m_reader) {
+            return {};
+        }
+        if (!m_reader->canRead() && m_repeats != 0) {
+            if (m_repeats > 0) {
+                --m_repeats;
+            }
+            m_reader = std::make_unique<QImageReader>(m_reader->fileName(), QByteArrayLiteral("gif"));
+        }
+        QImage image = m_reader->read();
+        if (image.isNull()) {
+            reset();
+        }
+        return image;
+    }
+
+    int delay() const { return m_reader->nextImageDelay(); }
+    void reset() { m_reader.reset(); }
+
+private:
+    std::unique_ptr<QImageReader> m_reader;
+    int m_repeats = 0;
+};
 
 FrameLoader::FrameLoader(std::shared_ptr<const ImageLoader> loader, QObject *parent)
     : QObject(parent)
@@ -20,12 +61,82 @@ FrameLoader::FrameLoader(std::shared_ptr<const ImageLoader> loader, QObject *par
     // Enough for a handful of 4.6K half-float frames (source + display ~175 MB each), or a
     // few dozen 2K DPX frames.
     m_budgetBytes = qint64(sizeof(void *) == 8 ? 1536 : 384) * 1024 * 1024;
+    m_gifTimer.setSingleShot(true);
+    m_gifTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_gifTimer, &QTimer::timeout, this, &FrameLoader::showGifFrame);
 }
 
 FrameLoader::~FrameLoader()
 {
+    stopGif();
+    m_gifThread.quit();
+    m_gifThread.wait();
     m_pool.clear();
     m_pool.waitForDone();
+}
+
+void FrameLoader::startGif(const QString &path)
+{
+    stopGif();
+    if (!m_gifReader) {
+        m_gifReader = new GifReader;
+        m_gifReader->moveToThread(&m_gifThread);
+        connect(&m_gifThread, &QThread::finished, m_gifReader, &QObject::deleteLater);
+        m_gifThread.start();
+    }
+    requestGifFrame(path);
+}
+
+void FrameLoader::stopGif()
+{
+    ++m_gifGeneration;
+    m_gifTimer.stop();
+    m_nextGifFrame = {};
+    if (m_gifReader) {
+        QMetaObject::invokeMethod(m_gifReader, &GifReader::reset, Qt::QueuedConnection);
+    }
+}
+
+void FrameLoader::requestGifFrame(const QString &path)
+{
+    const int generation = m_gifGeneration.load();
+    const int renderGeneration = m_generation;
+    const auto view = m_view;
+    const auto input = m_input;
+    QMetaObject::invokeMethod(m_gifReader, [this, path, generation, renderGeneration, view, input]() {
+        if (generation != m_gifGeneration.load()) {
+            return;
+        }
+        QImage source = m_gifReader->read(path);
+        if (source.isNull() || generation != m_gifGeneration.load()) {
+            return;
+        }
+        const GifFrame frame{source, ColorTransform::toDisplay(source, view, input),
+                             m_gifReader->delay(), renderGeneration};
+        QMetaObject::invokeMethod(this, [this, frame, generation]() {
+            if (generation == m_gifGeneration.load()) {
+                m_nextGifFrame = frame;
+                if (!m_gifTimer.isActive()) {
+                    showGifFrame();
+                }
+            }
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+}
+
+void FrameLoader::showGifFrame()
+{
+    if (m_nextGifFrame.source.isNull()) {
+        return;
+    }
+    GifFrame frame = std::exchange(m_nextGifFrame, {});
+    if (frame.renderGeneration != m_generation) {
+        frame.display = ColorTransform::toDisplay(frame.source, m_view, m_input);
+    }
+    // Decode one frame ahead so decoding time usually fits inside the current frame's delay.
+    m_gifTimer.start(qMax(1, frame.delay));
+    requestGifFrame();
+    emit gifFrameReady(frame.source, frame.display);
 }
 
 void FrameLoader::setRender(ColorTransform::View view, ColorTransform::Input input)

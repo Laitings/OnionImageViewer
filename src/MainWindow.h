@@ -113,6 +113,7 @@ private:
     // Viewer: frames load in the background (FrameLoader); these show and step through them.
     enum CompareMode { CompareOff, CompareNoView, ComparePinned };
     void showFrame(const FrameLoader::Frame &frame, bool requested);
+    void showGifFrame(const QImage &source, const QImage &display);
     void stepImage(int delta, bool wrap = false);
     void goToImage(int index);
     void prefetchAround();

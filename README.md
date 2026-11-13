@@ -7,7 +7,7 @@ the full file metadata, and export what you see with the view burned in.
 ## Features
 
 - **Formats**
-  - Everything Qt reads: PNG, JPEG, BMP, GIF, and with the Qt Image Formats add-on TIFF, WebP, TGA and more.
+  - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, WebP, TGA and more.
   - **DPX**: own reader (`src/DpxReader.*`). RGB, RGBA, ABGR and luma, 8/10/12/16 bit, filled or packed, either endianness.
   - **OpenEXR**: through the OpenEXR library from vcpkg. Optional at build time.
   - **HEIF / HEIC** `.heic` / `.heif` / `.hif` (iPhone photos, Canon and Fuji HEIF): through libheif with the libde265 HEVC decoder from vcpkg, as DLLs (both are LGPL). 8 and 10/12 bit, rotation and crop applied, Display P3 converted to sRGB, embedded thumbnails used for the file browser. Optional at build time.
@@ -18,7 +18,7 @@ the full file metadata, and export what you see with the view burned in.
 - **File browser**: folder panel laid out like Explorer's navigation pane, with Quick access (pinned folders: pin and unpin from the right-click menus, drag to reorder; starts with OneDrive, Desktop, Downloads, Documents and Pictures) above This PC's drive tree, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
-- **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in.
+- **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
