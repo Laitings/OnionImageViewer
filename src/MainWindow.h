@@ -288,6 +288,7 @@ private:
     QSplitter *m_viewerSplitter = nullptr;
     QWidget *m_navigationRow = nullptr;  // the address bar row: main navigation, then the split bar
     QWidget *m_mainNavigation = nullptr; // Back, Up, path bar, search and Images only
+    QToolButton *m_openSplitButton = nullptr; // "+" at the end of the address bar
     SplitPane *m_splitPane = nullptr;
     bool m_splitPaneActive = false;
     QAction *m_splitAction = nullptr;

@@ -1435,6 +1435,21 @@ void MainWindow::createCentralLayout()
             m_gridSearch->selectAll();
         }
     });
+    // "+" at the end of the address bar opens the split viewer (shown in the viewer while it is off).
+    m_openSplitButton = new QToolButton(navigationRow);
+    m_openSplitButton->setText(QStringLiteral("+"));
+    m_openSplitButton->setAutoRaise(true);
+    m_openSplitButton->setFixedSize(m_pathBar->minimumHeight() + 4, m_pathBar->minimumHeight());
+    m_openSplitButton->setFocusPolicy(Qt::NoFocus);
+    m_openSplitButton->setToolTip(QStringLiteral("Open a split view with its own file grid (V)"));
+    QFont plusFont = m_openSplitButton->font();
+    plusFont.setPointSizeF(plusFont.pointSizeF() * 1.4);
+    m_openSplitButton->setFont(plusFont);
+    m_openSplitButton->hide();
+    navigationLayout->addWidget(m_openSplitButton);
+    connect(m_openSplitButton, &QToolButton::clicked, this, [this]() {
+        m_splitAction->setChecked(true);
+    });
     // The row holds the main navigation and, side by side, the split pane's own bar.
     m_mainNavigation = navigationRow;
     m_navigationRow = new QWidget(rightPanel);
@@ -4535,6 +4550,7 @@ void MainWindow::layoutSplitHeader()
     if (!m_splitPane || !m_navigationRow) {
         return;
     }
+    m_openSplitButton->setVisible(isViewerVisible() && m_splitPane->isHidden());
     QWidget *header = m_splitPane->header();
     const bool inRow = !m_splitPane->isHidden() && isViewerVisible()
         && m_viewerSplitter->orientation() == Qt::Horizontal;
