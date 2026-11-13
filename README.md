@@ -18,10 +18,12 @@ the full file metadata, and export what you see with the view burned in.
 - **Color views** (Color menu): None, Auto, ARRI LogC3 → Rec.709 and LogC4 → Rec.709 (built-in approximations, or ARRI's own `.cube` LUTs when they are found in `luts/` next to the .exe), and any `.cube` LUT you load. EXR input can be set to ACES2065-1 or ACEScg for ACES comps.
 - **File browser**: folder panel laid out like Explorer's navigation pane, with Quick access (pinned folders: pin and unpin from the right-click menus, drag to reorder; starts with OneDrive, Desktop, Downloads, Documents and Pictures) above This PC's drive tree, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
-- **Split viewer** (S, or View → Split Viewer): splits the viewer into two panes, side by side or top and bottom. The second pane has its own file grid with a path bar and an Up button, so you can pick any image from any folder to show next to the main one. Click a pane or press Tab to make it active (it gets a blue frame); the arrow keys, Home/End, F and 1 act on the active pane, and Esc in the second pane goes back to its grid. Sync Zoom and Pan (on by default) zooms and pans both panes together; images of different sizes are shown at the same width so the same part of the frame lines up. The color view, channels and clipping overlay apply to both panes, and the status bar shows the active pane's image. The metadata panel follows the main pane.
+- **Split viewer** (V, or View → Split Viewer): splits the viewer into two panes, side by side or top and bottom. The second pane has its own file grid with a path bar and an Up button, so you can pick any image from any folder to show next to the main one. Click a pane or press Tab to make it active (it gets a blue frame); the arrow keys, Home/End, F and 1 act on the active pane, and Esc in the second pane goes back to its grid. Sync Zoom and Pan (on by default) zooms and pans both panes together; images of different sizes are shown at the same width so the same part of the frame lines up. The color view, channels and clipping overlay apply to both panes, and the status bar shows the active pane's image. The metadata panel and the scopes follow the main pane.
+- **Scopes** (S in the viewer, Ctrl+Shift+H anywhere): a histogram (RGB or luma) and a waveform (luma, RGB parade or RGB overlay) of the viewed image in a dockable panel, with the hovered pixel marked on both. By default they read the picture as displayed, with the color view or LUT applied, matching the pixel readout's display values (0–100 scale). **Stored values** reads the file's own values instead: scene-linear float images (EXR, ACES) get a scale in stops with 18% grey marked, other float images extend above 1 when they go there. Computed on a background thread from a downsampled image, and only while the panel is open.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
 - **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Keep the original size or set an output width and height and choose center crop, scale with crop, fit with black padding, or stretch. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
+- **Batch Rename** (F2): select files or folders in the grid and choose File → Batch Rename or Rename… / Batch Rename… in the right-click menu. Build the new name from a pattern with tokens: `{name}` (old name), `{n}` (counter with start, step and digits; `{n:4}` sets the digits), `{date}` (Exif date taken from JPEG, TIFF/DNG and HEIC, else the file date; `{date:yyyyMMdd_HHmmss}` sets the format), `{modified}` (file date), `{frame}`, `{folder}` and `{ext}`. Then find and replace (plain text or a regular expression with `\1` groups) and change the case of the name and the extension. The extension itself is always kept. Image sequences keep their frame numbers: `A001_C002.1001.dpx` becomes `Shot_010.1001.dpx`, and a whole sequence takes one counter value. A live preview shows every old → new name and marks names that can't be used (already taken, the same for two files, characters or names Windows doesn't allow), and Rename stays off until there are none. Swaps and case-only changes work. If one rename fails, the whole batch is put back. Edit → Undo Rename (Ctrl+Z) restores the names of the last batch; press it again to step back through earlier batches.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
@@ -77,7 +79,7 @@ Notes:
 - vcpkg is picked up automatically from `VCPKG_ROOT`, or else from Visual Studio (`%VSINSTALLDIR%\VC\vcpkg`). It has to be set up when the build folder is first configured; a build folder made without it must be deleted and configured again.
 - ARRI's LogC3/LogC4 → Rec.709 `.cube` files from `resources/luts/arri` are copied into `luts/` next to the .exe, where the ARRI views use them instead of the built-in curves. `-DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri` takes them from another folder.
 - `-DONION_VERSION=1.2.0` sets the version the app shows (default: the CMake project version).
-- Settings (view mode, color view, recent files, folders, pinned folders) are kept with `QSettings` under `OnionImageViewer` in the registry.
+- Settings (view mode, color view, recent files, folders, pinned folders, scope choices) are kept with `QSettings` under `OnionImageViewer` in the registry.
 
 ## Windows installer
 
@@ -118,6 +120,8 @@ src/
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
   FileItemDelegate.*      drawing of the Details and Tiles views
   FileOps.*               copy / cut / paste via the system clipboard, background file jobs
+  BatchRename.*           batch renamer engine: pattern tokens, sequences, conflict checks, safe renames
+  BatchRenameDialog.*     Batch Rename dialog with the live old → new preview
   ImageViewport.*         image display: zoom, pan, channels, clipping overlay
   SplitPane.*             second pane of the split viewer: its own file grid, viewport and frame loader
   OverlayButton.*         fading round buttons over the image (close, previous, next)
@@ -128,12 +132,14 @@ src/
   ExrReader.*             EXR reader (needs ONION_HAVE_OPENEXR)
   HeifReader.*            HEIF/HEIC reader (needs ONION_HAVE_LIBHEIF)
   DngReader.*             DNG raw development and embedded previews (needs ONION_HAVE_LIBRAW)
-  Exif.*                  Exif parser for the metadata panel
+  Exif.*                  Exif parser for the metadata panel and the renamer's date taken
   PsdReader.*             PSD/PSB reader
   VectorReader.*          PDF / AI (Qt PDF) and EPS (Ghostscript) rendering
   ColorTransform.*        display transforms: LogC3/LogC4 → Rec.709, .cube LUTs, ACES input
   Metadata.*              header-only metadata for the metadata panel
   MetadataPanel.*         the metadata side panel
+  Scopes.*                histogram and waveform computation (runs on a background thread)
+  ScopesPanel.*           the scopes side panel: drawing, source choice, hovered-pixel marks
 ```
 
 Readers return images with their stored values (DPX as 16-bit code values, EXR as half floats);

@@ -62,6 +62,10 @@ qt_add_executable(OnionImageViewer
     src/DngReader.cpp
     src/Exif.h
     src/Exif.cpp
+    src/BatchRename.h
+    src/BatchRename.cpp
+    src/BatchRenameDialog.h
+    src/BatchRenameDialog.cpp
     src/PsdReader.h
     src/PsdReader.cpp
     src/VectorReader.h
@@ -72,6 +76,10 @@ qt_add_executable(OnionImageViewer
     src/Metadata.cpp
     src/MetadataPanel.h
     src/MetadataPanel.cpp
+    src/Scopes.h
+    src/Scopes.cpp
+    src/ScopesPanel.h
+    src/ScopesPanel.cpp
     src/FrameLoader.h
     src/FrameLoader.cpp
     src/OverlayButton.h

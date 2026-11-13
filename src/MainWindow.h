@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BatchRename.h"
 #include "ColorTransform.h"
 #include "FrameLoader.h"
 
@@ -34,6 +35,7 @@ class QToolButton;
 class OverlayButton;
 class PathBar;
 class MetadataPanel;
+class ScopesPanel;
 class QDockWidget;
 class QKeyEvent;
 class QDragEnterEvent;
@@ -133,6 +135,7 @@ private:
     void playbackTick();
     bool handleViewerKey(QKeyEvent *event);
     void refreshCurrentDisplay();
+    void updateScopes();
     void setCompareMode(CompareMode mode);
     void pinCurrentImage();
     void updateCompare();
@@ -160,6 +163,10 @@ private:
     void copyImageToClipboard();
     void exportImageAs();
     void batchConvert(const QStringList &paths);
+    // Batch Rename (F2): opens the dialog for the files and folders, then renames them in the
+    // background. Each batch is kept so Undo Rename (Ctrl+Z) can put the names back.
+    void batchRename(const QStringList &paths);
+    void runRename(const QList<BatchRename::Move> &moves, bool undo);
     void copyPathToClipboard(const QString &path);
     void showInExplorer(const QString &path);
     // Adds "Pin to Quick access" or "Unpin from Quick access" for a folder to a context menu.
@@ -204,6 +211,9 @@ private:
     QThreadPool m_batchPool;
     std::atomic<bool> m_batchCanceled{false};
     bool m_batchRunning = false;
+    QAction *m_batchRenameAction = nullptr;
+    QAction *m_undoRenameAction = nullptr;
+    QList<QList<BatchRename::Move>> m_renameHistory; // finished rename batches, newest last
     QAction *m_copyPathAction = nullptr;
     QAction *m_showInExplorerAction = nullptr;
     QAction *m_cutAction = nullptr;
@@ -223,6 +233,9 @@ private:
     MetadataPanel *m_metadataPanel = nullptr;
     QDockWidget *m_metadataDock = nullptr;
     QAction *m_metadataAction = nullptr;
+    ScopesPanel *m_scopesPanel = nullptr;
+    QDockWidget *m_scopesDock = nullptr;
+    QAction *m_scopesAction = nullptr;
     QTimer m_metadataTimer;
     QThreadPool m_metadataPool;
     int m_metadataGeneration = 0;

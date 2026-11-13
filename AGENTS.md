@@ -73,7 +73,12 @@ running the app on real files.
   `src/MainWindow.cpp`, and header metadata in `src/Metadata.cpp`. `Exif::describe()` turns an
   Exif block into readable metadata entries.
 - User-visible settings persist through `QSettings` with keys defined as constants near the top
-  of `MainWindow.cpp`.
+  of `MainWindow.cpp` (self-contained panels such as `ScopesPanel` keep their own keys at the
+  top of their .cpp).
+- The scopes (`ScopesPanel`) get the viewed image from `MainWindow::updateScopes()`, which must be
+  called wherever the viewed image or the color view changes (`showFrame`, `showGifFrame`,
+  `refreshCurrentDisplay`); `showGrid()` clears them. Their "Display" source is the rendered
+  8-bit image, so they follow the color view and LUT like the pixel readout's display values.
 - The folder panel (`FolderTreePanel`) is two views stacked to look like one Explorer-style
   pane: a `QTreeWidget` with the Quick access and This PC headings (pins are the children of
   Quick access) and below it the `QFileSystemModel` drive tree, indented to sit under This PC.
@@ -87,6 +92,13 @@ running the app on real files.
   `SplitPane::handleKey`), and viewer actions that zoom should act on `activeViewport()` and then
   call `syncSplitViews()`. New display aids (like channels and clipping) should be applied to both
   viewports.
+- The batch renamer is split in two: `BatchRename::` (`src/BatchRename.*`) plans the names and
+  carries out renames with no UI, and `BatchRenameDialog` only shows the options and preview.
+  `MainWindow::runRename` runs `BatchRename::apply` on `m_batchPool` and keeps each finished batch
+  in `m_renameHistory` for Undo Rename. Renames never overwrite: names taken by another file in
+  the batch go through a temporary name, and a failure rolls the whole batch back. Name checks
+  follow Windows rules (case-insensitive, no `<>:"/\|?*`, no reserved device names) on every
+  platform.
 - Batch files, PowerShell scripts and the Inno Setup script use CRLF line endings
   (`.gitattributes`).
 

@@ -70,7 +70,7 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     m_upButton->setIcon(Icons::icon(Icons::Kind::Up));
     m_browseButton = makeButton(QStringLiteral("Pick another image from this pane's own file grid (Esc)"));
     m_browseButton->setIcon(Icons::icon(Icons::Kind::ViewIcons));
-    m_closeButton = makeButton(QStringLiteral("Close the split view (S)"));
+    m_closeButton = makeButton(QStringLiteral("Close the split view (V)"));
     m_closeButton->setText(QStringLiteral("✕"));
     headerLayout->addWidget(m_upButton);
     headerLayout->addWidget(m_pathBar, 1);

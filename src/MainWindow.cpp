@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "BatchRenameDialog.h"
 
 #include "ColorTransform.h"
 #include "DngReader.h"
@@ -15,6 +16,7 @@
 #include "ImageViewport.h"
 #include "Metadata.h"
 #include "MetadataPanel.h"
+#include "ScopesPanel.h"
 #include "OverlayButton.h"
 #include "PathBar.h"
 #include "SplitPane.h"
@@ -264,6 +266,16 @@ const QString SettingsGridView = QStringLiteral("grid/view");
 const QString SettingsImagesOnly = QStringLiteral("grid/imagesOnly");
 const QString SettingsDetailsColumns = QStringLiteral("grid/detailsColumns");
 const QString SettingsExportFormat = QStringLiteral("export/format");
+const QString SettingsRenamePattern = QStringLiteral("rename/pattern");
+const QString SettingsRenameFind = QStringLiteral("rename/find");
+const QString SettingsRenameReplace = QStringLiteral("rename/replace");
+const QString SettingsRenameRegex = QStringLiteral("rename/regex");
+const QString SettingsRenameMatchCase = QStringLiteral("rename/matchCase");
+const QString SettingsRenameNameCase = QStringLiteral("rename/nameCase");
+const QString SettingsRenameExtensionCase = QStringLiteral("rename/extensionCase");
+const QString SettingsRenameCounterStart = QStringLiteral("rename/counterStart");
+const QString SettingsRenameCounterStep = QStringLiteral("rename/counterStep");
+const QString SettingsRenameCounterDigits = QStringLiteral("rename/counterDigits");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
@@ -962,7 +974,7 @@ void MainWindow::createActions()
     });
 
     // Split viewer: a second pane with its own file grid, to put any two images side by side.
-    m_splitAction = new QAction(QStringLiteral("Split Viewer (S)"), this);
+    m_splitAction = new QAction(QStringLiteral("Split Viewer (V)"), this);
     m_splitAction->setCheckable(true);
     m_splitAction->setToolTip(QStringLiteral("Show a second image next to this one, picked from its own file grid"));
     connect(m_splitAction, &QAction::toggled, this, &MainWindow::setSplitEnabled);
@@ -1003,6 +1015,26 @@ void MainWindow::createActions()
     m_batchConvertAction = new QAction(QStringLiteral("Batch Convert…"), this);
     connect(m_batchConvertAction, &QAction::triggered, this, [this]() {
         batchConvert(selectedPaths());
+    });
+    m_batchRenameAction = new QAction(QStringLiteral("Batch Rename…"), this);
+    m_batchRenameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    m_batchRenameAction->setToolTip(QStringLiteral("Rename the selected files with a pattern, counter, date, find and replace"));
+    connect(m_batchRenameAction, &QAction::triggered, this, [this]() {
+        batchRename(selectedPaths());
+    });
+    m_undoRenameAction = new QAction(QStringLiteral("Undo Rename"), this);
+    m_undoRenameAction->setShortcut(QKeySequence::Undo);
+    m_undoRenameAction->setEnabled(false);
+    connect(m_undoRenameAction, &QAction::triggered, this, [this]() {
+        if (m_renameHistory.isEmpty() || m_batchRunning || isViewerVisible()) {
+            return;
+        }
+        QList<BatchRename::Move> back;
+        const QList<BatchRename::Move> last = m_renameHistory.constLast();
+        for (const BatchRename::Move &move : last) {
+            back.append({move.to, move.from});
+        }
+        runRename(back, true);
     });
 
     m_copyImageAction = new QAction(QStringLiteral("Copy Image"), this);
@@ -1084,6 +1116,24 @@ void MainWindow::createActions()
         QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     });
     m_metadataPool.setMaxThreadCount(1);
+
+    // Scopes: histogram and waveform of the viewed image, another dock on the right.
+    m_scopesPanel = new ScopesPanel(this);
+    m_scopesDock = new QDockWidget(QStringLiteral("Scopes"), this);
+    m_scopesDock->setObjectName(QStringLiteral("ScopesDock"));
+    m_scopesDock->setWidget(m_scopesPanel);
+    m_scopesDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_scopesDock->setMinimumWidth(300);
+    addDockWidget(Qt::RightDockWidgetArea, m_scopesDock);
+    m_scopesDock->hide();
+    m_scopesAction = m_scopesDock->toggleViewAction();
+    m_scopesAction->setText(QStringLiteral("Scopes"));
+    m_scopesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
+    m_scopesAction->setToolTip(QStringLiteral("Histogram and waveform of the image (S or Ctrl+Shift+H)"));
+    addAction(m_scopesAction);
+    connect(m_scopesDock, &QDockWidget::visibilityChanged, this, [this]() {
+        QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
+    });
     m_metadataTimer.setSingleShot(true);
     m_metadataTimer.setInterval(120); // while scrubbing or playing, wait until it settles
     connect(&m_metadataTimer, &QTimer::timeout, this, &MainWindow::loadMetadata);
@@ -1103,6 +1153,7 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     fileMenu->addAction(m_exportAction);
     fileMenu->addAction(m_batchConvertAction);
+    fileMenu->addAction(m_batchRenameAction);
     fileMenu->addSeparator();
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
@@ -1111,6 +1162,8 @@ void MainWindow::createMenus()
     fileMenu->addAction(QStringLiteral("Exit"), this, &QWidget::close);
 
     QMenu *editMenu = menuBar()->addMenu(QStringLiteral("Edit"));
+    editMenu->addAction(m_undoRenameAction);
+    editMenu->addSeparator();
     editMenu->addAction(m_cutAction);
     editMenu->addAction(m_copyImageAction);
     editMenu->addAction(m_pasteAction);
@@ -1148,6 +1201,7 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_clippingAction);
     viewMenu->addAction(m_fullScreenAction);
     viewMenu->addAction(m_metadataAction);
+    viewMenu->addAction(m_scopesAction);
     viewMenu->addSeparator();
     viewMenu->addAction(QStringLiteral("Edit Path (Alt+D)"), this, [this]() {
         m_pathBar->startEditing();
@@ -1161,7 +1215,7 @@ void MainWindow::createMenus()
             "  Space  play / pause\n"
             "  W  compare wipe on / off\n"
             "  P  pin this image as the compare image\n"
-            "  S  split viewer on / off (a second pane with its own file grid)\n"
+            "  V  split viewer on / off (a second pane with its own file grid)\n"
             "  Tab  switch the active pane; keys and zoom act on the active pane\n"
             "  In the split pane: Esc / Backspace  its file grid,  Enter  open,\n"
             "    Backspace in the grid  up one folder,  Esc in the grid  back to the image\n"
@@ -1169,6 +1223,7 @@ void MainWindow::createMenus()
             "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
             "  C  show clipping\n"
             "  I  metadata panel (Ctrl+I anywhere)\n"
+            "  S  scopes: histogram and waveform (Ctrl+Shift+H anywhere)\n"
             "  Ctrl+C  copy the picture,  Ctrl+Shift+S  export it with the LUT burned in\n"
             "  Esc  leave full screen, then back to the grid\n\n"
             "Color:\n"
@@ -1180,7 +1235,8 @@ void MainWindow::createMenus()
             "  Click, Ctrl+click, Shift+click, or drag a box around files to select them\n"
             "  Shift+arrows extend the selection,  Ctrl+arrows move without selecting,\n"
             "  Ctrl+Space selects or unselects,  Ctrl+A selects all\n"
-            "  Ctrl+C / Ctrl+X / Ctrl+V  copy / cut / paste files (also to and from Explorer)\n\n"
+            "  Ctrl+C / Ctrl+X / Ctrl+V  copy / cut / paste files (also to and from Explorer)\n"
+            "  F2  rename the selected files (Batch Rename),  Ctrl+Z  undo the last rename\n\n"
             "Anywhere:\n"
             "  Alt+D or F4  type or paste a path\n"
             "  F11  full screen\n"
@@ -1464,7 +1520,7 @@ void MainWindow::createCentralLayout()
     imageLayout->setContentsMargins(0, 0, 0, 0);
     imageLayout->setSpacing(0);
 
-    // The main viewport, and the split viewer's second pane next to it (hidden until S).
+    // The main viewport, and the split viewer's second pane next to it (hidden until V).
     m_viewerSplitter = new QSplitter(Qt::Horizontal, imagePage);
     m_viewerSplitter->setChildrenCollapsible(false);
     m_viewerSplitter->setHandleWidth(4);
@@ -1831,6 +1887,7 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     }
     updateColorButton(m_view);
     updateImageInfo();
+    updateScopes();
     updatePixelReadout(m_hoveredPixel);
     if (requested && QFileInfo(frame.path).suffix().compare(QLatin1String("gif"), Qt::CaseInsensitive) == 0) {
         m_frameLoader->startGif(frame.path);
@@ -1845,6 +1902,7 @@ void MainWindow::showGifFrame(const QImage &source, const QImage &display)
     if (m_compareMode == CompareNoView) {
         updateCompare();
     }
+    updateScopes();
     updatePixelReadout(m_hoveredPixel);
 }
 
@@ -1900,7 +1958,7 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
     if (!plain) {
         return false;
     }
-    if (event->key() == Qt::Key_S && !shift) {
+    if (event->key() == Qt::Key_V && !shift) {
         if (!event->isAutoRepeat()) {
             m_splitAction->toggle();
         }
@@ -1995,6 +2053,11 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
             m_metadataAction->trigger();
         }
         return true;
+    case Qt::Key_S:
+        if (!event->isAutoRepeat()) {
+            m_scopesAction->trigger();
+        }
+        return true;
     default:
         return false;
     }
@@ -2010,9 +2073,25 @@ void MainWindow::refreshCurrentDisplay()
         m_imageViewport->setImage(m_currentDisplayImage, true);
         updateCompare();
         updateImageInfo();
+        updateScopes();
         updatePixelReadout(m_hoveredPixel);
     }
     updateColorButton(m_view);
+}
+
+// Hands the viewed image to the scopes panel (which only computes while it is shown).
+void MainWindow::updateScopes()
+{
+    if (!isViewerVisible() || m_currentSourceImage.isNull()) {
+        m_scopesPanel->clear();
+        return;
+    }
+    const ColorTransform::View shown = ColorTransform::resolveView(m_view, m_currentSourceImage);
+    QString viewName = ColorTransform::displayName(shown);
+    if (shown == ColorTransform::View::CustomLut && ColorTransform::hasLut()) {
+        viewName = QFileInfo(ColorTransform::lutFilePath()).fileName();
+    }
+    m_scopesPanel->setImages(m_currentSourceImage, m_currentDisplayImage, m_input, viewName);
 }
 
 void MainWindow::setCompareMode(CompareMode mode)
@@ -2113,6 +2192,7 @@ void MainWindow::updateImageInfo()
 void MainWindow::updatePixelReadout(const QPoint &pixel)
 {
     m_hoveredPixel = pixel;
+    m_scopesPanel->setHoveredPixel(isViewerVisible() ? pixel : QPoint(-1, -1));
     showPixelReadout(pixel, m_currentSourceImage, m_currentDisplayImage);
 }
 
@@ -2273,7 +2353,7 @@ void MainWindow::setFullScreenMode(bool on)
     if (on) {
         m_wasMaximized = isMaximized();
         m_hiddenForFullScreen.clear();
-        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel, m_metadataDock};
+        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel, m_metadataDock, m_scopesDock};
         for (QToolBar *toolbar : findChildren<QToolBar *>()) {
             chrome.append(toolbar);
         }
@@ -2600,6 +2680,131 @@ void MainWindow::batchConvert(const QStringList &paths)
     });
 }
 
+void MainWindow::batchRename(const QStringList &paths)
+{
+    if (m_batchRunning || m_fileJob || isViewerVisible()) {
+        return;
+    }
+    if (paths.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Select files in the file grid to rename."), 4000);
+        return;
+    }
+    QSettings settings;
+    BatchRename::Options options;
+    options.pattern = settings.value(SettingsRenamePattern, options.pattern).toString();
+    options.find = settings.value(SettingsRenameFind).toString();
+    options.replace = settings.value(SettingsRenameReplace).toString();
+    options.regex = settings.value(SettingsRenameRegex, false).toBool();
+    options.matchCase = settings.value(SettingsRenameMatchCase, false).toBool();
+    options.nameCase = static_cast<BatchRename::CaseChange>(settings.value(SettingsRenameNameCase, 0).toInt());
+    options.extensionCase = static_cast<BatchRename::CaseChange>(settings.value(SettingsRenameExtensionCase, 0).toInt());
+    options.counterStart = settings.value(SettingsRenameCounterStart, options.counterStart).toInt();
+    options.counterStep = settings.value(SettingsRenameCounterStep, options.counterStep).toInt();
+    options.counterPadding = settings.value(SettingsRenameCounterDigits, options.counterPadding).toInt();
+
+    BatchRenameDialog dialog(paths, options, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    options = dialog.options();
+    settings.setValue(SettingsRenamePattern, options.pattern);
+    settings.setValue(SettingsRenameFind, options.find);
+    settings.setValue(SettingsRenameReplace, options.replace);
+    settings.setValue(SettingsRenameRegex, options.regex);
+    settings.setValue(SettingsRenameMatchCase, options.matchCase);
+    settings.setValue(SettingsRenameNameCase, int(options.nameCase));
+    settings.setValue(SettingsRenameExtensionCase, int(options.extensionCase));
+    settings.setValue(SettingsRenameCounterStart, options.counterStart);
+    settings.setValue(SettingsRenameCounterStep, options.counterStep);
+    settings.setValue(SettingsRenameCounterDigits, options.counterPadding);
+    const QList<BatchRename::Move> moves = dialog.moves();
+    if (!moves.isEmpty()) {
+        runRename(moves, false);
+    }
+}
+
+// Renames on a background thread (thousands of frames on a network share take a while), then
+// refreshes the grid with the renamed files selected. A failed batch is rolled back as a whole.
+void MainWindow::runRename(const QList<BatchRename::Move> &moves, bool undo)
+{
+    const QString title = undo ? QStringLiteral("Undo Rename") : QStringLiteral("Batch Rename");
+    auto *progress = new QProgressDialog(undo ? QStringLiteral("Putting the old names back…") : QStringLiteral("Renaming…"),
+                                         QString(), 0, 0, this);
+    progress->setWindowTitle(title);
+    progress->setCancelButton(nullptr);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setMinimumDuration(400);
+    progress->setValue(0);
+    m_batchRunning = true;
+    updateEditActions();
+    QPointer<QProgressDialog> guard(progress);
+    m_batchPool.start([this, moves, undo, title, guard]() {
+        const BatchRename::Outcome outcome = BatchRename::apply(moves, [guard](int done, int total) {
+            QMetaObject::invokeMethod(qApp, [guard, done, total]() {
+                if (guard) {
+                    guard->setMaximum(total);
+                    guard->setValue(done);
+                }
+            }, Qt::QueuedConnection);
+        });
+        QMetaObject::invokeMethod(this, [this, outcome, undo, title, guard]() {
+            if (guard) {
+                guard->deleteLater();
+            }
+            m_batchRunning = false;
+            if (!outcome.done.isEmpty()) {
+                if (undo) {
+                    m_renameHistory.removeLast();
+                } else {
+                    m_renameHistory.append(outcome.done);
+                }
+            }
+            QSet<QString> renamed;
+            for (const BatchRename::Move &move : outcome.done) {
+                renamed.insert(QDir::cleanPath(move.to).toLower());
+            }
+            if (!isViewerVisible() && !m_currentFolderPath.isEmpty()) {
+                const int scroll = m_fileGrid->verticalScrollBar()->value();
+                populateFileGrid(m_currentFolderPath, false);
+                m_fileGrid->verticalScrollBar()->setValue(scroll);
+                QListWidgetItem *first = nullptr;
+                for (int row = 0; row < m_fileGrid->count() && !renamed.isEmpty(); ++row) {
+                    QListWidgetItem *item = m_fileGrid->item(row);
+                    if (item->isHidden() || !renamed.contains(QDir::cleanPath(item->data(FilePathRole).toString()).toLower())) {
+                        continue;
+                    }
+                    if (!first) {
+                        first = item;
+                        m_fileGrid->setCurrentItem(item, QItemSelectionModel::ClearAndSelect);
+                    } else {
+                        item->setSelected(true);
+                    }
+                }
+                if (first) {
+                    m_fileGrid->scrollToItem(first);
+                }
+            }
+            updateEditActions();
+            if (outcome.errors.isEmpty()) {
+                const int count = int(outcome.done.size());
+                statusBar()->showMessage(undo ? QStringLiteral("Put back the old names of %1 item(s)").arg(count)
+                                              : QStringLiteral("Renamed %1 item(s). Ctrl+Z undoes it.").arg(count),
+                                         6000);
+                return;
+            }
+            QStringList shown = outcome.errors.mid(0, 15);
+            if (outcome.errors.size() > shown.size()) {
+                shown.append(QStringLiteral("…and %1 more").arg(outcome.errors.size() - shown.size()));
+            }
+            QMessageBox::warning(this, title,
+                                 (outcome.rolledBack ? QStringLiteral("Nothing was renamed: the names were put back after this problem.\n\n")
+                                                     : QString())
+                                     + shown.join(QLatin1Char('\n')));
+        }, Qt::QueuedConnection);
+    });
+}
+
 void MainWindow::copyImageToClipboard()
 {
     if (!isViewerVisible()) {
@@ -2693,6 +2898,11 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
             });
             convert->setEnabled(!m_batchRunning);
         }
+        auto *rename = menu.addAction(paths.size() > 1 ? QStringLiteral("Batch Rename…") : QStringLiteral("Rename…"), this, [this, paths]() {
+            batchRename(paths);
+        });
+        rename->setShortcut(m_batchRenameAction->shortcut());
+        rename->setEnabled(!m_batchRunning && !m_fileJob);
         menu.addAction(m_cutAction);
         menu.addAction(m_copyFilesAction);
         if (item->data(IsFolderRole).toBool()) {
@@ -2874,6 +3084,8 @@ void MainWindow::updateEditActions()
         && std::any_of(selected.cbegin(), selected.cend(), [](const QListWidgetItem *item) {
             return !item->isHidden() && item->data(IsImageRole).toBool();
         }));
+    m_batchRenameAction->setEnabled(hasSelection && !m_batchRunning && !m_fileJob);
+    m_undoRenameAction->setEnabled(grid && !m_renameHistory.isEmpty() && !m_batchRunning && !m_fileJob);
     m_cutAction->setEnabled(hasSelection);
     m_copyFilesAction->setEnabled(hasSelection);
     m_pasteAction->setEnabled(grid && canPaste && !m_currentFolderPath.isEmpty() && !m_fileJob);
@@ -3732,6 +3944,7 @@ void MainWindow::showGrid()
     m_contentStack->setCurrentWidget(m_fileGrid);
     m_pixelLabel->clear();
     m_swatchLabel->hide();
+    m_scopesPanel->clear();
     scheduleMetadata();
     updateImageInfo();
     updateColorButton(m_view);
