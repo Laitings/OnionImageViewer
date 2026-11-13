@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "ColorTransform.h"
+#include "DngReader.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "HeifReader.h"
@@ -230,6 +231,9 @@ QStringList supportedImageSuffixes()
     if (Exr::isAvailable()) {
         suffixes.append(QStringLiteral("exr"));
     }
+    if (Dng::isAvailable()) {
+        suffixes.append(QStringLiteral("dng"));
+    }
     if (Heif::isAvailable()) {
         for (const char *heif : {"heic", "heif", "hif"}) {
             suffixes.append(QString::fromLatin1(heif));
@@ -404,6 +408,10 @@ QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTr
 
 QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
 {
+    if (Dng::isDngFile(filePath)) {
+        return displayThumbnail(Dng::readThumbnail(filePath, size), view, input, size);
+    }
+
     if (Exr::isExrFile(filePath)) {
         return displayThumbnail(Exr::read(filePath, nullptr, true), view, input, size);
     }
@@ -1302,11 +1310,13 @@ void MainWindow::saveSettings()
 
 void MainWindow::openImage()
 {
+    const QString filter = QStringLiteral("Images (*.ai *.bmp%1 *.dpx *.eps *.epsf *.epsi *.exr *.gif *.heic *.heif *.hif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)")
+                               .arg(Dng::isAvailable() ? QStringLiteral(" *.dng") : QString());
     const QString filePath = QFileDialog::getOpenFileName(
         this,
         QStringLiteral("Open Image"),
         QString(),
-        QStringLiteral("Images (*.ai *.bmp *.dpx *.eps *.epsf *.epsi *.exr *.gif *.heic *.heif *.hif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
+        filter);
 
     if (filePath.isEmpty()) {
         return;

@@ -3,6 +3,8 @@
 Read `README.md` first: it has the features, dependencies, build steps and code layout. This file
 adds what you need to change the code safely.
 
+Delegate independent coding tasks to subagents when running them in parallel would improve speed or quality.
+
 ## Project facts
 
 - C++17, Qt 6 Widgets, CMake. One executable target, `OnionImageViewer` (`qt_add_executable`, `WIN32`).
@@ -11,12 +13,13 @@ adds what you need to change the code safely.
   still compiles with GCC/Clang on Linux, which is handy for headless checks
   (`QT_QPA_PLATFORM=offscreen`).
 - Optional features are compile-time switches set by CMake: `ONION_HAVE_OPENEXR` (OpenEXR found),
-  `ONION_HAVE_LIBHEIF` (libheif found) and `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must
+  `ONION_HAVE_LIBHEIF` (libheif found), `ONION_HAVE_LIBRAW` (LibRaw found) and
+  `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must
   build with and without them.
 - vcpkg uses the overlay triplet `triplets/x64-windows-onion.cmake`: everything static with the /MD
-  runtime, except libheif and libde265, which are LGPL and must stay DLLs. CMake copies the DLLs
-  from vcpkg's `bin` folder next to the .exe and their licences to `licenses/`; the installer
-  script ships both. Never enable libheif's `hevc` or `x264` features: they pull in GPL encoders.
+  runtime, except libheif, libde265 and LibRaw, which must stay DLLs. CMake copies the DLLs
+  next to the .exe and their licences to `licenses/`. The installer ships them together.
+  Never enable libheif's `hevc` or `x264` features: they pull in GPL encoders.
   Add any other LGPL library to the triplet's dynamic list in the same way.
 - New source files must be added to the `qt_add_executable` list in `CMakeLists.txt`.
 - The version is `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`, unless
@@ -62,8 +65,9 @@ running the app on real files.
     OneDrive files); use the Windows shell thumbnail cache;
   - avoid calls that touch every drive root on the UI thread;
   - read files sequentially rather than with many scattered reads.
-- Readers keep the stored values (no colour conversion on load) and hand them to
-  `ColorTransform::toDisplay()`. Add a new format by writing a reader with `isXxxFile()` and
+- Readers generally keep the stored values and hand them to `ColorTransform::toDisplay()`.
+  The DNG reader develops sensor data to sRGB before handing it to the display pipeline.
+  Add a new format by writing a reader with `isXxxFile()` and
   `read()` like `src/DpxReader.h`, then hook it in where the other readers are: loading in
   `src/ImageLoader.cpp`, thumbnails, the list of image extensions and the Open dialog filter in
   `src/MainWindow.cpp`, and header metadata in `src/Metadata.cpp`. `Exif::describe()` turns an

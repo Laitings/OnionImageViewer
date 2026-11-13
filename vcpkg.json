@@ -5,6 +5,10 @@
   "dependencies": [
     "openexr",
     {
+      "name": "libraw",
+      "features": ["dng-lossy"]
+    },
+    {
       "name": "libheif",
       "default-features": false,
       "features": [

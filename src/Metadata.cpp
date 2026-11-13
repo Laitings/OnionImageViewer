@@ -4,6 +4,7 @@
 #include "Exif.h"
 #include "ExrReader.h"
 #include "HeifReader.h"
+#include "DngReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
 
@@ -661,6 +662,11 @@ QList<Entry> read(const QString &filePath)
         }
     } else if (Psd::isPsdFile(filePath)) {
         addPsdEntries(entries, filePath);
+    } else if (Dng::isDngFile(filePath)) {
+        const auto facts = Dng::describe(filePath);
+        for (const auto &fact : facts) {
+            entries.append({QStringLiteral("DNG"), fact.first, fact.second});
+        }
     } else if (Heif::isHeifFile(filePath)) {
         addHeifEntries(entries, filePath);
     } else if (Exr::isExrFile(filePath)) {
