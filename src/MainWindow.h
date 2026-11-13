@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QStringList>
 #include <memory>
+#include <atomic>
 
 class QAction;
 class QCheckBox;
@@ -146,6 +147,7 @@ private:
     void setFullScreenMode(bool on);
     void copyImageToClipboard();
     void exportImageAs();
+    void batchConvert(const QStringList &paths);
     void copyPathToClipboard(const QString &path);
     void showInExplorer(const QString &path);
     // Adds "Pin to Quick access" or "Unpin from Quick access" for a folder to a context menu.
@@ -186,6 +188,10 @@ private:
     QAction *m_fullScreenAction = nullptr;
     QAction *m_copyImageAction = nullptr;
     QAction *m_exportAction = nullptr;
+    QAction *m_batchConvertAction = nullptr;
+    QThreadPool m_batchPool;
+    std::atomic<bool> m_batchCanceled{false};
+    bool m_batchRunning = false;
     QAction *m_copyPathAction = nullptr;
     QAction *m_showInExplorerAction = nullptr;
     QAction *m_cutAction = nullptr;

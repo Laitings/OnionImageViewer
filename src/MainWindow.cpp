@@ -25,6 +25,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -40,6 +41,7 @@
 #include <QDir>
 #include <QFileIconProvider>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QFileInfo>
 #include <QGridLayout>
 #include <QIcon>
@@ -70,6 +72,7 @@
 #include <QSlider>
 #include <QSize>
 #include <QStackedWidget>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStyle>
@@ -78,6 +81,7 @@
 #include <QScrollBar>
 #include <QThread>
 #include <QThreadPool>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QToolBar>
 #include <QHeaderView>
@@ -99,6 +103,46 @@
 #endif
 
 namespace {
+struct ExportFormat
+{
+    QString name;
+    QString suffix;
+    QByteArray writer;
+
+    bool hasQuality() const { return writer == "jpeg" || writer == "webp"; }
+};
+
+QList<ExportFormat> exportFormats()
+{
+    const QList<QByteArray> writable = QImageWriter::supportedImageFormats();
+    const ExportFormat candidates[] = {
+        {QStringLiteral("PNG"), QStringLiteral("png"), "png"},
+        {QStringLiteral("JPEG"), QStringLiteral("jpg"), "jpeg"},
+        {QStringLiteral("TIFF"), QStringLiteral("tif"), "tiff"},
+        {QStringLiteral("WebP"), QStringLiteral("webp"), "webp"},
+        {QStringLiteral("BMP"), QStringLiteral("bmp"), "bmp"},
+    };
+    QList<ExportFormat> formats;
+    for (const ExportFormat &format : candidates) {
+        if (writable.contains(format.writer)) {
+            formats.append(format);
+        }
+    }
+    return formats;
+}
+
+bool writeExportImage(QImageWriter &writer, const ExportFormat &format, const QImage &image, int quality)
+{
+    if (format.hasQuality()) {
+        writer.setQuality(quality);
+    }
+    if (format.writer == "tiff") {
+        writer.setCompression(1); // LZW
+    }
+    return writer.write(format.writer == "jpeg" || format.writer == "bmp"
+                            ? image.convertToFormat(QImage::Format_RGB888) : image);
+}
+
 const QString SettingsMainWindowGeometry = QStringLiteral("mainWindow/geometry");
 const QString SettingsMainWindowState = QStringLiteral("mainWindow/state");
 const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
@@ -552,6 +596,8 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    m_batchCanceled = true;
+    m_batchPool.waitForDone();
     m_thumbnailPool.clear();
     m_thumbnailPool.waitForDone();
     m_metadataPool.clear();
@@ -806,6 +852,10 @@ void MainWindow::createActions()
     m_exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     m_exportAction->setToolTip(QStringLiteral("Save the picture as shown, with the color view or LUT burned in"));
     connect(m_exportAction, &QAction::triggered, this, &MainWindow::exportImageAs);
+    m_batchConvertAction = new QAction(QStringLiteral("Batch Convert…"), this);
+    connect(m_batchConvertAction, &QAction::triggered, this, [this]() {
+        batchConvert(selectedPaths());
+    });
 
     m_copyImageAction = new QAction(QStringLiteral("Copy Image"), this);
     m_copyImageAction->setShortcut(QKeySequence::Copy);
@@ -904,6 +954,7 @@ void MainWindow::createMenus()
     updateRecentImagesMenu();
     fileMenu->addSeparator();
     fileMenu->addAction(m_exportAction);
+    fileMenu->addAction(m_batchConvertAction);
     fileMenu->addSeparator();
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
@@ -2079,28 +2130,9 @@ void MainWindow::exportImageAs()
     }
     const QImage display = m_currentDisplayImage;
 
-    struct Format
-    {
-        QString name;
-        QString suffix;
-        QByteArray writer;
-    };
-    const QList<QByteArray> writable = QImageWriter::supportedImageFormats();
-    QList<Format> formats;
-    const Format candidates[] = {
-        {QStringLiteral("PNG"), QStringLiteral("png"), "png"},
-        {QStringLiteral("JPEG"), QStringLiteral("jpg"), "jpeg"},
-        {QStringLiteral("TIFF"), QStringLiteral("tif"), "tiff"},
-        {QStringLiteral("WebP"), QStringLiteral("webp"), "webp"},
-        {QStringLiteral("BMP"), QStringLiteral("bmp"), "bmp"},
-    };
-    for (const Format &format : candidates) {
-        if (writable.contains(format.writer)) {
-            formats.append(format);
-        }
-    }
+    const QList<ExportFormat> formats = exportFormats();
     QStringList filters;
-    for (const Format &format : formats) {
+    for (const ExportFormat &format : formats) {
         filters << QStringLiteral("%1 (*.%2)").arg(format.name, format.suffix);
     }
 
@@ -2144,21 +2176,21 @@ void MainWindow::exportImageAs()
     }
 
     // The format follows the chosen filter; add its extension if the name has none of ours.
-    const Format *format = &formats.first();
+    const ExportFormat *format = &formats.first();
     for (int i = 0; i < formats.size(); ++i) {
         if (filters.at(i) == selectedFilter) {
             format = &formats.at(i);
         }
     }
     const QString typedSuffix = QFileInfo(path).suffix().toLower();
-    for (const Format &candidate : formats) {
+    for (const ExportFormat &candidate : formats) {
         if (typedSuffix == candidate.suffix || (candidate.suffix == QStringLiteral("jpg") && typedSuffix == QStringLiteral("jpeg"))
             || (candidate.suffix == QStringLiteral("tif") && typedSuffix == QStringLiteral("tiff"))) {
             format = &candidate;
         }
     }
     if (typedSuffix.isEmpty() || QFileInfo(path).suffix().compare(format->suffix, Qt::CaseInsensitive) != 0) {
-        const bool known = std::any_of(formats.cbegin(), formats.cend(), [&](const Format &f) {
+        const bool known = std::any_of(formats.cbegin(), formats.cend(), [&](const ExportFormat &f) {
             return typedSuffix == f.suffix || typedSuffix == QStringLiteral("jpeg") || typedSuffix == QStringLiteral("tiff");
         });
         if (!known) {
@@ -2167,17 +2199,7 @@ void MainWindow::exportImageAs()
     }
 
     QImageWriter writer(path, format->writer);
-    if (format->writer == "jpeg" || format->writer == "webp") {
-        writer.setQuality(95);
-    }
-    if (format->writer == "tiff") {
-        writer.setCompression(1); // LZW: lossless and much smaller than uncompressed
-    }
-    QImage image = display;
-    if (format->writer == "jpeg" || format->writer == "bmp") {
-        image = image.convertToFormat(QImage::Format_RGB888); // no alpha in these
-    }
-    if (!writer.write(image)) {
+    if (!writeExportImage(writer, *format, display, 95)) {
         QMessageBox::warning(this, QStringLiteral("Export As"),
                              QStringLiteral("Could not save %1:\n%2").arg(QDir::toNativeSeparators(path), writer.errorString()));
         return;
@@ -2185,6 +2207,170 @@ void MainWindow::exportImageAs()
     settings.setValue(SettingsExportFolder, QFileInfo(path).absolutePath());
     settings.setValue(SettingsExportFormat, format->suffix);
     statusBar()->showMessage(QStringLiteral("Exported %1").arg(QDir::toNativeSeparators(path)), 5000);
+}
+
+void MainWindow::batchConvert(const QStringList &paths)
+{
+    if (m_batchRunning || isViewerVisible()) {
+        return;
+    }
+    QStringList sources;
+    for (const QString &path : paths) {
+        if (isImageFile(path) && QFileInfo(path).isFile()) {
+            sources.append(path);
+        }
+    }
+    if (sources.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Select images in the file grid to convert."), 4000);
+        return;
+    }
+    const QList<ExportFormat> formats = exportFormats();
+    if (formats.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("No export formats are available."), 4000);
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Batch Convert"));
+    auto *form = new QFormLayout(&dialog);
+    form->addRow(new QLabel(QStringLiteral("Convert %1 selected image(s)").arg(sources.size()), &dialog));
+    auto *formatBox = new QComboBox(&dialog);
+    for (const ExportFormat &format : formats) {
+        formatBox->addItem(format.name);
+    }
+    form->addRow(QStringLiteral("Format"), formatBox);
+    auto *quality = new QSpinBox(&dialog);
+    quality->setRange(1, 100);
+    quality->setValue(95);
+    form->addRow(QStringLiteral("Quality"), quality);
+    auto *resize = new QCheckBox(QStringLiteral("Fit within width and height"), &dialog);
+    form->addRow(QStringLiteral("Size"), resize);
+    auto *width = new QSpinBox(&dialog);
+    auto *height = new QSpinBox(&dialog);
+    for (auto *dimension : {width, height}) {
+        dimension->setRange(1, 65535);
+        dimension->setSuffix(QStringLiteral(" px"));
+        dimension->setValue(1920);
+        dimension->setEnabled(false);
+        connect(resize, &QCheckBox::toggled, dimension, &QWidget::setEnabled);
+    }
+    height->setValue(1080);
+    form->addRow(QStringLiteral("Max width"), width);
+    form->addRow(QStringLiteral("Max height"), height);
+    auto *folder = new QLineEdit(QDir::toNativeSeparators(m_currentFolderPath), &dialog);
+    folder->setReadOnly(true);
+    auto *browse = new QPushButton(QStringLiteral("Browse…"), &dialog);
+    auto *destination = new QHBoxLayout;
+    destination->addWidget(folder, 1);
+    destination->addWidget(browse);
+    form->addRow(QStringLiteral("Output folder"), destination);
+    connect(browse, &QPushButton::clicked, &dialog, [&]() {
+        const QString selected = QFileDialog::getExistingDirectory(&dialog, QStringLiteral("Output Folder"), folder->text());
+        if (!selected.isEmpty()) {
+            folder->setText(QDir::toNativeSeparators(selected));
+        }
+    });
+    const auto updateQuality = [&]() {
+        form->setRowVisible(quality, formats.at(formatBox->currentIndex()).hasQuality());
+    };
+    connect(formatBox, &QComboBox::currentIndexChanged, &dialog, updateQuality);
+    updateQuality();
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Convert"));
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const ExportFormat format = formats.at(formatBox->currentIndex());
+    const QSize bounds = resize->isChecked() ? QSize(width->value(), height->value()) : QSize();
+    const QString target = QDir::fromNativeSeparators(folder->text());
+    const int qualityValue = quality->value();
+    auto *progress = new QProgressDialog(QStringLiteral("Converting images…"), QStringLiteral("Cancel"),
+                                         0, int(sources.size()), this);
+    progress->setWindowTitle(QStringLiteral("Batch Convert"));
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    connect(progress, &QProgressDialog::canceled, this, [this]() { m_batchCanceled = true; });
+    progress->setValue(0);
+    m_batchCanceled = false;
+    m_batchRunning = true;
+    updateEditActions();
+    const auto loader = m_imageLoader;
+    const auto input = m_input;
+    m_batchPool.start([this, progress, sources, format, bounds, target, qualityValue, loader, input]() {
+        QStringList errors;
+        int converted = 0;
+        int attempted = 0;
+        const QDir output(target);
+        for (const QString &source : sources) {
+            if (m_batchCanceled) {
+                break;
+            }
+            const QFileInfo info(source);
+            const auto result = loader->load(source);
+            QString error = result.error;
+            if (result.isValid()) {
+                QImage image = ColorTransform::toDisplay(result.image, ColorTransform::View::None, input);
+                if (bounds.isValid() && (image.width() > bounds.width() || image.height() > bounds.height())) {
+                    const QSize fitted = image.size().scaled(bounds, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
+                    image = image.scaled(fitted, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                }
+                QTemporaryFile temporary(output.filePath(QStringLiteral(".onion-convert-XXXXXX")));
+                if (temporary.open()) {
+                    QImageWriter writer(&temporary, format.writer);
+                    if (writeExportImage(writer, format, image, qualityValue) && temporary.flush()) {
+                        const QString base = info.completeBaseName();
+                        const QString name = base + QLatin1Char('.') + format.suffix;
+                        QString path = output.filePath(name);
+                        if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) {
+                            path = output.filePath(FileOps::keepBothName(target, name, false));
+                        }
+                        // Rename only after encoding, and never replace an existing file.
+                        temporary.close();
+                        if (!m_batchCanceled && temporary.rename(path)) {
+                            temporary.setAutoRemove(false);
+                            ++converted;
+                        } else if (!m_batchCanceled) {
+                            error = temporary.errorString();
+                        }
+                    } else {
+                        error = writer.error() == QImageWriter::UnknownError ? temporary.errorString() : writer.errorString();
+                    }
+                } else {
+                    error = temporary.errorString();
+                }
+            } else if (error.isEmpty()) {
+                error = QStringLiteral("Could not read the image.");
+            }
+            if (!error.isEmpty()) {
+                errors.append(QStringLiteral("%1 — %2").arg(info.fileName(), error));
+            }
+            ++attempted;
+            QMetaObject::invokeMethod(this, [this, progress, attempted]() {
+                if (!m_batchCanceled) {
+                    progress->setValue(attempted);
+                }
+            }, Qt::QueuedConnection);
+        }
+        QMetaObject::invokeMethod(this, [this, progress, converted, attempted, total = sources.size(), errors, target]() {
+            progress->deleteLater();
+            m_batchRunning = false;
+            if (converted > 0 && !isViewerVisible() && QDir(m_currentFolderPath) == QDir(target)) {
+                populateFileGrid(m_currentFolderPath, false);
+            }
+            updateEditActions();
+            const QString summary = QStringLiteral("Converted %1 of %2 images.").arg(converted).arg(total);
+            if (!errors.isEmpty()) {
+                QMessageBox message(QMessageBox::Warning, QStringLiteral("Batch Convert"), summary, QMessageBox::Ok, this);
+                message.setDetailedText(errors.join(QLatin1Char('\n')));
+                message.exec();
+            } else {
+                statusBar()->showMessage(attempted < total ? QStringLiteral("Canceled. %1").arg(summary) : summary, 8000);
+            }
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::copyImageToClipboard()
@@ -2274,6 +2460,12 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
             });
         }
         menu.addSeparator();
+        if (item->data(IsImageRole).toBool()) {
+            auto *convert = menu.addAction(QStringLiteral("Batch Convert…"), this, [this, paths]() {
+                batchConvert(paths);
+            });
+            convert->setEnabled(!m_batchRunning);
+        }
         menu.addAction(m_cutAction);
         menu.addAction(m_copyFilesAction);
         if (item->data(IsFolderRole).toBool()) {
@@ -2450,6 +2642,11 @@ void MainWindow::updateEditActions()
     bool cut = false;
     const bool canPaste = FileOps::readMimeData(QApplication::clipboard()->mimeData(), &paths, &cut);
     const bool hasSelection = grid && !m_fileGrid->selectedItems().isEmpty();
+    const auto selected = m_fileGrid->selectedItems();
+    m_batchConvertAction->setEnabled(grid && !m_batchRunning
+        && std::any_of(selected.cbegin(), selected.cend(), [](const QListWidgetItem *item) {
+            return !item->isHidden() && item->data(IsImageRole).toBool();
+        }));
     m_cutAction->setEnabled(hasSelection);
     m_copyFilesAction->setEnabled(hasSelection);
     m_pasteAction->setEnabled(grid && canPaste && !m_currentFolderPath.isEmpty() && !m_fileJob);
