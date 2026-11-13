@@ -35,35 +35,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Cache Qt
         id: qt-cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\Qt
-          key: qt-${{ runner.os }}-${{ env.QT_VERSION }}-msvc-imageformats
+          key: qt-${{ runner.os }}-${{ env.QT_VERSION }}-msvc2022_64-imageformats-v2
 
-      # aqtinstall straight from pip, picking whichever 64-bit MSVC build the Qt version offers.
+      # Qt 6.11's online repository is split per compiler (qt6_6111/qt6_6111_msvc2022_64/...),
+      # which aqtinstall can't read yet, so the archives are fetched from Updates.xml directly and
+      # checked against Qt's .sha1 files.
       - name: Install Qt
+        if: steps.qt-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          python -m pip install --quiet --upgrade aqtinstall
-          $archs = (python -m aqt list-qt windows desktop --arch $env:QT_VERSION) -split '\s+' | Where-Object { $_ }
-          Write-Host "Qt $env:QT_VERSION architectures: $($archs -join ', ')"
-          $arch = $archs | Where-Object { $_ -match '^win64_msvc\d+_64$' } | Sort-Object -Descending | Select-Object -First 1
-          if (-not $arch) { throw "No 64-bit MSVC build of Qt $env:QT_VERSION" }
-          Write-Host "Modules: $((python -m aqt list-qt windows desktop --modules $env:QT_VERSION $arch) -join ' ')"
-          if ("${{ steps.qt-cache.outputs.cache-hit }}" -ne "true") {
-            python -m aqt install-qt windows desktop $env:QT_VERSION $arch --outputdir "${{ github.workspace }}\Qt" --modules qtimageformats
-            if ($LASTEXITCODE -ne 0) { throw "aqt install-qt failed" }
+          $ProgressPreference = 'SilentlyContinue'
+          $v = $env:QT_VERSION; $vv = $v -replace '\.', ''
+          $base = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_$vv/qt6_${vv}_msvc2022_64"
+          $packages = @("qt.qt6.$vv.win64_msvc2022_64", "qt.qt6.$vv.addons.qtimageformats.win64_msvc2022_64")
+          Invoke-WebRequest "$base/Updates.xml" -OutFile (Join-Path $env:RUNNER_TEMP "Updates.xml") -UseBasicParsing
+          [xml]$updates = Get-Content (Join-Path $env:RUNNER_TEMP "Updates.xml") -Raw
+          $out = "${{ github.workspace }}\Qt"
+          $dl = Join-Path $env:RUNNER_TEMP "qt-archives"
+          New-Item -ItemType Directory -Force $out, $dl | Out-Null
+          foreach ($name in $packages) {
+            $pkg = $updates.Updates.PackageUpdate | Where-Object { $_.Name -eq $name }
+            if (-not $pkg) { throw "Package $name not in $base/Updates.xml" }
+            foreach ($archive in ($pkg.DownloadableArchives -split ',\s*' | Where-Object { $_ })) {
+              $file = "$($pkg.Version)$archive"
+              $url = "$base/$name/$file"
+              Write-Host "Downloading $file"
+              Invoke-WebRequest $url -OutFile (Join-Path $dl $file) -UseBasicParsing
+              Invoke-WebRequest "$url.sha1" -OutFile (Join-Path $dl "$file.sha1") -UseBasicParsing
+              $expected = (Get-Content (Join-Path $dl "$file.sha1") -Raw).Trim().Split(' ')[0]
+              $actual = (Get-FileHash (Join-Path $dl $file) -Algorithm SHA1).Hash
+              if ($actual -ne $expected) { throw "Checksum mismatch for $file" }
+              & 7z x -y -bso0 -bsp0 "-o$out" (Join-Path $dl $file)
+              if ($LASTEXITCODE -ne 0) { throw "Extracting $file failed" }
+            }
           }
-          $qtDir = Get-ChildItem "${{ github.workspace }}\Qt\$env:QT_VERSION" -Directory | Where-Object { Test-Path (Join-Path $_.FullName "bin\windeployqt.exe") } | Select-Object -First 1
-          if (-not $qtDir) { throw "Qt was not installed where expected" }
-          "QT_ROOT_DIR=$($qtDir.FullName)" >> $env:GITHUB_ENV
-          Write-Host "Qt: $($qtDir.FullName)"
+
+      - name: Find Qt
+        shell: pwsh
+        run: |
+          $deploy = Get-ChildItem "${{ github.workspace }}\Qt" -Recurse -Filter windeployqt.exe | Select-Object -First 1
+          if (-not $deploy) { throw "windeployqt.exe not found under Qt" }
+          $qtDir = $deploy.Directory.Parent.FullName
+          # Same as aqtinstall/the Qt installer: let qmake/qtpaths find the install where it is.
+          if (-not (Test-Path "$qtDir\bin\qt.conf")) { "[Paths]`nPrefix=.." | Set-Content "$qtDir\bin\qt.conf" }
+          "QT_ROOT_DIR=$qtDir" >> $env:GITHUB_ENV
+          Write-Host "Qt: $qtDir"
+          Get-ChildItem "$qtDir\plugins\imageformats" | ForEach-Object { Write-Host "  imageformats: $($_.Name)" }
 
       # vcpkg checked out in full, so the builtin-baseline pinned in vcpkg.json resolves.
       - name: Set up vcpkg
