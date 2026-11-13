@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  QT_VERSION: "6.11.*"
+  QT_VERSION: "6.11.1"   # same Qt as the work PC; aqt could not find the 6.11.3 metadata
   VCPKG_ROOT: ${{ github.workspace }}\vcpkg
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
 
