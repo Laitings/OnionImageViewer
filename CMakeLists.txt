@@ -68,6 +68,8 @@ qt_add_executable(OnionImageViewer
     src/Icons.cpp
     src/FileItemDelegate.h
     src/FileItemDelegate.cpp
+    src/FileOps.h
+    src/FileOps.cpp
 )
 
 target_link_libraries(OnionImageViewer
