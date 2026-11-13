@@ -15,6 +15,8 @@ on:
       - .github/workflows/release-installer.yml
       - installer/**
       - resources/luts/**
+      - vcpkg.json
+      - triplets/**
 
 permissions:
   contents: write
@@ -102,11 +104,12 @@ jobs:
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
 
-      - name: Cache vcpkg packages (OpenEXR)
+      # OpenEXR (static), libheif and libde265 (DLLs, see triplets/).
+      - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}
           restore-keys: vcpkg-${{ runner.os }}-
 
       - name: Install Inno Setup and Ninja if missing
@@ -136,6 +139,14 @@ jobs:
           ./installer/build-installer.ps1
           -QtDir "$env:QT_ROOT_DIR"
           -Version "${{ steps.version.outputs.version }}"
+
+      - name: Check that HEIC support is in the installer
+        shell: pwsh
+        run: |
+          foreach ($file in "heif.dll", "libde265.dll", "licenses\libheif.txt", "licenses\libde265.txt") {
+            if (-not (Test-Path "installer\stage\$file")) { throw "$file is missing from installer\stage" }
+          }
+          Get-ChildItem installer\stage -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Keep the installer as a workflow artifact
         uses: actions/upload-artifact@v4

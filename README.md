@@ -10,13 +10,14 @@ the full file metadata, and export what you see with the view burned in.
   - Everything Qt reads: PNG, JPEG, BMP, GIF, and with the Qt Image Formats add-on TIFF, WebP, TGA and more.
   - **DPX**: own reader (`src/DpxReader.*`). RGB, RGBA, ABGR and luma, 8/10/12/16 bit, filled or packed, either endianness.
   - **OpenEXR**: through the OpenEXR library from vcpkg. Optional at build time.
+  - **HEIF / HEIC** `.heic` / `.heif` / `.hif` (iPhone photos, Canon and Fuji HEIF): through libheif with the libde265 HEVC decoder from vcpkg, as DLLs (both are LGPL). 8 and 10/12 bit, rotation and crop applied, Display P3 converted to sRGB, embedded thumbnails used for the file browser. Optional at build time.
   - **Photoshop** `.psd` / `.psb`: own reader (`src/PsdReader.*`). Uses the stored composite, or blends the layers when there is none.
   - **PDF and Illustrator** `.pdf` / `.ai`: rendered with the Qt PDF module. Optional at build time.
   - **EPS** `.eps` / `.epsf` / `.epsi`: rendered with Ghostscript when it is installed, otherwise the embedded preview is shown.
 - **Color views** (Color menu): None, Auto, ARRI LogC3 → Rec.709 and LogC4 → Rec.709 (built-in approximations, or ARRI's own `.cube` LUTs when they are found in `luts/` next to the .exe), and any `.cube` LUT you load. EXR input can be set to ACES2065-1 or ACEScg for ACES comps.
 - **File browser**: folder tree with quick locations, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
-- **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, or what Qt reports, with a filter.
+- **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in.
 
 View → Keyboard Shortcuts in the app lists all the keys.
@@ -28,12 +29,15 @@ View → Keyboard Shortcuts in the app lists all the keys.
 | Visual Studio | 2026 (2022 works too) | "Desktop development with C++" workload. Its bundled vcpkg is used for OpenEXR. |
 | Qt | 6.11 `msvc2022_64` | Installed under `C:\Qt\6.11.x\msvc2022_64`. Add **Qt Image Formats** (TIFF, WebP, TGA) and **Qt PDF** (PDF/AI) in the Qt Maintenance Tool. |
 | CMake + Ninja | 3.21+ | Both come with Visual Studio. |
-| OpenEXR | from vcpkg | Declared in `vcpkg.json` (pinned baseline, triplet `x64-windows-static-md`, linked statically). Fetched on the first configure. |
+| OpenEXR | from vcpkg | Declared in `vcpkg.json` (pinned baseline, triplet `x64-windows-onion` from `triplets/`, linked statically). Fetched on the first configure. |
+| libheif + libde265 | from vcpkg | Declared in `vcpkg.json` without libheif's default features (its `hevc` feature is the GPL x265 encoder). Built as DLLs (LGPL) by the `triplets/` triplet and copied next to the .exe with their licences in `licenses/`. |
 | Ghostscript | optional, at run time | For EPS files. Found as `gswin64c` on the PATH or under `C:\Program Files\gs`. |
 | Inno Setup 6 | optional | Only for building the installer: `winget install JRSoftware.InnoSetup`. |
 
-Without OpenEXR or Qt PDF the app still builds; it just can't open those formats (CMake says so
-when it configures).
+Without OpenEXR, libheif or Qt PDF the app still builds; it just can't open those formats (CMake
+says so when it configures). The first configure after HEIF support was added builds libheif and
+rebuilds OpenEXR for the new triplet, which takes a few minutes; `build-run.bat` reconfigures an
+older `build-msvc` folder by itself.
 
 ## Build and run
 
@@ -70,7 +74,8 @@ Notes:
 
 Double-click `installer\build-installer.bat` (or run `installer\build-installer.ps1` with the same
 `-QtDir`, `-ArriLutDir`, `-SkipBuild` options). It builds Release into `build-installer`,
-collects the .exe, Qt (via `windeployqt`), the MSVC runtime and the ARRI LUTs in
+collects the .exe, the libheif/libde265 DLLs with their licences, Qt (via `windeployqt`), the
+MSVC runtime and the ARRI LUTs in
 `installer\stage`, and compiles `installer\OnionImageViewer.iss` with Inno Setup into
 `installer\Output\OnionImageViewer-Setup-<version>.exe`. The version comes from
 `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt` unless `-Version` is given.
@@ -81,8 +86,8 @@ folder instead).
 
 Publishing a GitHub release builds the installer automatically
 (`.github/workflows/release-installer.yml`): on GitHub, Releases → Draft a new release, pick a tag
-such as `v1.2.0` and publish. The workflow builds the app with Qt 6.11 (Image Formats, Qt PDF) and
-OpenEXR on Windows, and about 10 minutes later `OnionImageViewer-Setup-1.2.0.exe` is attached to
+such as `v1.2.0` and publish. The workflow builds the app with Qt 6.11 (Image Formats, Qt PDF),
+OpenEXR and libheif on Windows, and about 10 minutes later `OnionImageViewer-Setup-1.2.0.exe` is attached to
 the release. The tag (without the `v`) becomes the version everywhere: the About box, the .exe's
 file properties and the installer. It can also be run by hand from Actions → Release installer →
 Run workflow; that gives a test installer as a download on the run, with no release.
@@ -91,7 +96,8 @@ Run workflow; that gives a test installer as a download on the run, with no rele
 
 ```
 CMakeLists.txt            build; optional OpenEXR and Qt PDF; ARRI LUT copy
-vcpkg.json                vcpkg manifest (OpenEXR)
+vcpkg.json                vcpkg manifest (OpenEXR, libheif)
+triplets/                 vcpkg triplet: static libraries, but libheif/libde265 as DLLs (LGPL)
 build-run.bat             build + deploy + run (calls tools/build-run.ps1)
 installer/                Inno Setup script and the scripts that build the installer
 resources/                app icon (.ico/.png/.svg) and the Windows .rc file
@@ -107,9 +113,11 @@ src/
   OverlayButton.*         fading round buttons over the image (close, previous, next)
   Icons.*                 vector line icons for toolbar and menus
   FrameLoader.*           background loading, frame cache and read-ahead for sequences
-  ImageLoader.*           picks the reader by file type (DPX, EXR, PSD, vector, else QImageReader)
+  ImageLoader.*           picks the reader by file type (DPX, EXR, HEIF, PSD, vector, else QImageReader)
   DpxReader.*             DPX reader
   ExrReader.*             EXR reader (needs ONION_HAVE_OPENEXR)
+  HeifReader.*            HEIF/HEIC reader (needs ONION_HAVE_LIBHEIF)
+  Exif.*                  Exif parser for the metadata panel
   PsdReader.*             PSD/PSB reader
   VectorReader.*          PDF / AI (Qt PDF) and EPS (Ghostscript) rendering
   ColorTransform.*        display transforms: LogC3/LogC4 → Rec.709, .cube LUTs, ACES input

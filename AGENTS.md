@@ -10,8 +10,14 @@ adds what you need to change the code safely.
   thumbnails, clipboard drop effects, shell icons) sits behind `#ifdef Q_OS_WIN`, so the rest
   still compiles with GCC/Clang on Linux, which is handy for headless checks
   (`QT_QPA_PLATFORM=offscreen`).
-- Optional features are compile-time switches set by CMake: `ONION_HAVE_OPENEXR` (OpenEXR found)
-  and `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must build with and without them.
+- Optional features are compile-time switches set by CMake: `ONION_HAVE_OPENEXR` (OpenEXR found),
+  `ONION_HAVE_LIBHEIF` (libheif found) and `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must
+  build with and without them.
+- vcpkg uses the overlay triplet `triplets/x64-windows-onion.cmake`: everything static with the /MD
+  runtime, except libheif and libde265, which are LGPL and must stay DLLs. CMake copies the DLLs
+  from vcpkg's `bin` folder next to the .exe and their licences to `licenses/`; the installer
+  script ships both. Never enable libheif's `hevc` or `x264` features: they pull in GPL encoders.
+  Add any other LGPL library to the triplet's dynamic list in the same way.
 - New source files must be added to the `qt_add_executable` list in `CMakeLists.txt`.
 - The version is `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`, unless
   `-DONION_VERSION` overrides it (the release workflow passes the GitHub release tag). It reaches
@@ -59,8 +65,9 @@ running the app on real files.
 - Readers keep the stored values (no colour conversion on load) and hand them to
   `ColorTransform::toDisplay()`. Add a new format by writing a reader with `isXxxFile()` and
   `read()` like `src/DpxReader.h`, then hook it in where the other readers are: loading in
-  `src/ImageLoader.cpp`, thumbnails and the list of image extensions in `src/MainWindow.cpp`,
-  and header metadata in `src/Metadata.cpp`.
+  `src/ImageLoader.cpp`, thumbnails, the list of image extensions and the Open dialog filter in
+  `src/MainWindow.cpp`, and header metadata in `src/Metadata.cpp`. `Exif::describe()` turns an
+  Exif block into readable metadata entries.
 - User-visible settings persist through `QSettings` with keys defined as constants near the top
   of `MainWindow.cpp`.
 - Batch files, PowerShell scripts and the Inno Setup script use CRLF line endings

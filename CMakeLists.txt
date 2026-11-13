@@ -15,10 +15,14 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endif()
 endif()
 
-# Link vcpkg libraries statically (with the same /MD runtime as Qt), so no extra DLLs have to be
-# shipped next to the .exe.
-if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
-    set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "vcpkg triplet")
+# vcpkg triplet (triplets/x64-windows-onion.cmake): the same /MD runtime as Qt, OpenEXR linked
+# statically, and the LGPL libraries libheif and libde265 as DLLs next to the .exe.
+# Build folders configured before HEIF support used x64-windows-static-md; they are switched over.
+if(CMAKE_HOST_WIN32)
+    set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE STRING "vcpkg overlay triplets")
+    if(NOT DEFINED VCPKG_TARGET_TRIPLET OR VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static-md")
+        set(VCPKG_TARGET_TRIPLET "x64-windows-onion" CACHE STRING "vcpkg triplet" FORCE)
+    endif()
 endif()
 
 project(OnionImageViewer
@@ -50,6 +54,10 @@ qt_add_executable(OnionImageViewer
     src/DpxReader.cpp
     src/ExrReader.h
     src/ExrReader.cpp
+    src/HeifReader.h
+    src/HeifReader.cpp
+    src/Exif.h
+    src/Exif.cpp
     src/PsdReader.h
     src/PsdReader.cpp
     src/VectorReader.h
@@ -141,6 +149,34 @@ if(OpenEXR_FOUND)
     target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_OPENEXR)
 else()
     message(STATUS "OpenEXR not found: building without EXR support")
+endif()
+
+# HEIF/HEIC support is optional as well: libheif with the libde265 HEVC decoder (both LGPL, so they
+# are DLLs on Windows; see triplets/). The DLLs and their licences are copied next to the .exe.
+find_package(libheif CONFIG QUIET)
+if(libheif_FOUND AND TARGET heif)
+    message(STATUS "libheif ${libheif_VERSION} found: HEIF/HEIC support enabled")
+    target_link_libraries(OnionImageViewer PRIVATE heif)
+    target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_LIBHEIF)
+    if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+        set(ONION_VCPKG_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+        file(GLOB ONION_VCPKG_DLLS "${ONION_VCPKG_PREFIX}/bin/*.dll")
+        if(ONION_VCPKG_DLLS)
+            add_custom_command(TARGET OnionImageViewer POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONION_VCPKG_DLLS} "$<TARGET_FILE_DIR:OnionImageViewer>"
+                VERBATIM)
+        endif()
+        foreach(ONION_LGPL_LIB libheif libde265)
+            if(EXISTS "${ONION_VCPKG_PREFIX}/share/${ONION_LGPL_LIB}/copyright")
+                configure_file("${ONION_VCPKG_PREFIX}/share/${ONION_LGPL_LIB}/copyright"
+                    "${CMAKE_CURRENT_BINARY_DIR}/licenses/${ONION_LGPL_LIB}.txt" COPYONLY)
+            endif()
+        endforeach()
+        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt"
+            "${CMAKE_CURRENT_BINARY_DIR}/licenses/THIRD-PARTY-NOTICES.txt" COPYONLY)
+    endif()
+else()
+    message(STATUS "libheif not found: building without HEIF/HEIC support")
 endif()
 
 # PDF and Illustrator support is optional too: it needs the Qt PDF module (Qt Maintenance Tool:
