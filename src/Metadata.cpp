@@ -3,6 +3,7 @@
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "PsdReader.h"
+#include "VectorReader.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -632,6 +633,12 @@ QList<Entry> read(const QString &filePath)
     addFileEntries(entries, info);
     if (Dpx::isDpxFile(filePath)) {
         addDpxEntries(entries, filePath);
+    } else if (Vector::isVectorFile(filePath)) {
+        const QString group = QStringLiteral("Vector");
+        const QList<QPair<QString, QString>> facts = Vector::describe(filePath);
+        for (const auto &fact : facts) {
+            entries.append({group, fact.first, fact.second});
+        }
     } else if (Psd::isPsdFile(filePath)) {
         addPsdEntries(entries, filePath);
     } else if (Exr::isExrFile(filePath)) {

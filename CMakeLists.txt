@@ -52,6 +52,8 @@ qt_add_executable(OnionImageViewer
     src/ExrReader.cpp
     src/PsdReader.h
     src/PsdReader.cpp
+    src/VectorReader.h
+    src/VectorReader.cpp
     src/ColorTransform.h
     src/ColorTransform.cpp
     src/Metadata.h
@@ -117,6 +119,17 @@ if(OpenEXR_FOUND)
     target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_OPENEXR)
 else()
     message(STATUS "OpenEXR not found: building without EXR support")
+endif()
+
+# PDF and Illustrator support is optional too: it needs the Qt PDF module (Qt Maintenance Tool:
+# Extensions > Qt PDF). EPS files render through Ghostscript at run time when it's installed.
+find_package(Qt6 QUIET COMPONENTS Pdf)
+if(TARGET Qt6::Pdf)
+    message(STATUS "Qt PDF found: PDF/Illustrator support enabled")
+    target_link_libraries(OnionImageViewer PRIVATE Qt6::Pdf)
+    target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_QTPDF)
+else()
+    message(STATUS "Qt PDF not found: PDF/Illustrator files need Ghostscript")
 endif()
 
 target_compile_definitions(OnionImageViewer
