@@ -3,12 +3,14 @@
 #include "Icons.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
+#include "NameFilter.h"
 #include "PathBar.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPixmap>
 #include <QScrollBar>
@@ -74,6 +76,15 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     m_closeButton->setText(QStringLiteral("✕"));
     headerLayout->addWidget(m_upButton);
     headerLayout->addWidget(m_pathBar, 1);
+    m_search = new QLineEdit(m_header);
+    m_search->setPlaceholderText(QStringLiteral("Search"));
+    m_search->setAccessibleName(QStringLiteral("Search the split pane's folder"));
+    m_search->addAction(Icons::icon(Icons::Kind::Search), QLineEdit::LeadingPosition);
+    m_search->setClearButtonEnabled(true);
+    m_search->setToolTip(QStringLiteral("Filter by name. Wildcards: *.psd, IMG_00??.dng, *.psd;*.tif"));
+    m_search->setMaximumWidth(200);
+    m_search->installEventFilter(this);
+    headerLayout->addWidget(m_search);
     headerLayout->addWidget(m_browseButton);
     headerLayout->addWidget(m_closeButton);
     layout->addWidget(m_header);
@@ -108,6 +119,12 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     }
 
     connect(m_grid, &QListWidget::itemActivated, this, &SplitPane::openItem);
+    connect(m_search, &QLineEdit::textChanged, this, [this]() {
+        applySearch();
+        if (!isBrowsing()) {
+            showBrowser(); // typing a search means looking for another file
+        }
+    });
     connect(m_grid, &QListWidget::currentItemChanged, this, &SplitPane::selectionChanged);
     connect(m_pathBar, &PathBar::pathActivated, this, [this](const QString &path) {
         const QFileInfo info(path);
@@ -147,6 +164,11 @@ void SplitPane::browse(const QString &folderPath, const QString &selectPath)
     const QString absolute = folder.absolutePath();
     if (absolute != m_folderPath) {
         m_folderPath = absolute;
+        // A search is for one folder, like in Explorer.
+        {
+            const QSignalBlocker blocker(m_search);
+            m_search->clear();
+        }
         m_grid->clear();
         m_items.clear();
         m_imagePaths.clear();
@@ -207,6 +229,61 @@ QString SplitPane::selectedPath() const
         return m_folderPath;
     }
     return m_currentPath;
+}
+
+void SplitPane::reclaimHeader()
+{
+    if (m_header->parentWidget() != this) {
+        static_cast<QVBoxLayout *>(layout())->insertWidget(0, m_header);
+    }
+    setHeaderInline(false);
+    m_header->show();
+}
+
+void SplitPane::setHeaderInline(bool inline_)
+{
+    // In the address bar row the bar has that row's height; on top of the pane it gets a little air.
+    m_header->layout()->setContentsMargins(4, inline_ ? 0 : 2, 2, inline_ ? 0 : 2);
+}
+
+void SplitPane::applySearch()
+{
+    const NameFilter filter(m_search->text());
+    const bool searching = !m_search->text().trimmed().isEmpty();
+    QListWidgetItem *firstShown = nullptr;
+    for (int i = 0; i < m_grid->count(); ++i) {
+        QListWidgetItem *item = m_grid->item(i);
+        const bool hidden = searching && !filter.matches(item->text());
+        item->setHidden(hidden);
+        if (!hidden && !firstShown) {
+            firstShown = item;
+        }
+    }
+    if (QListWidgetItem *current = m_grid->currentItem(); (!current || current->isHidden()) && firstShown) {
+        m_grid->setCurrentItem(firstShown);
+    }
+    m_thumbnailTimer.start();
+}
+
+bool SplitPane::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_search && event->type() == QEvent::KeyPress) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Escape) {
+            m_search->clear();
+            m_grid->setFocus(Qt::ShortcutFocusReason);
+            return true;
+        }
+        // Down or Enter from the search field moves on to the results.
+        if (key == Qt::Key_Down || key == Qt::Key_Return || key == Qt::Key_Enter) {
+            m_grid->setFocus(Qt::ShortcutFocusReason);
+            if (key != Qt::Key_Down) {
+                openItem(m_grid->currentItem());
+            }
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 bool SplitPane::isBrowsing() const

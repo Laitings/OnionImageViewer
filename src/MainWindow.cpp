@@ -19,6 +19,7 @@
 #include "MetadataPanel.h"
 #include "ScopesPanel.h"
 #include "OverlayButton.h"
+#include "NameFilter.h"
 #include "PathBar.h"
 #include "SplitPane.h"
 #include "UpdateChecker.h"
@@ -109,64 +110,6 @@
 #endif
 
 namespace {
-// Matches file names against the search field. Plain text matches anywhere in the name, as before.
-// A query containing * or ? is read Explorer-style: one or more patterns separated by ; or spaces,
-// each matched against the whole name (so "*.psd" means names ending in .psd), and a name is shown
-// when any pattern matches. Matching ignores case. Patterns are compiled once per query.
-class NameFilter final
-{
-public:
-    explicit NameFilter(const QString &query)
-    {
-        const QString trimmed = query.trimmed();
-        if (!trimmed.contains(QLatin1Char('*')) && !trimmed.contains(QLatin1Char('?'))) {
-            m_text = trimmed;
-            return;
-        }
-        static const QRegularExpression separators(QStringLiteral("[;\\s]+"));
-        for (const QString &term : trimmed.split(separators, Qt::SkipEmptyParts)) {
-            if (term.contains(QLatin1Char('*')) || term.contains(QLatin1Char('?'))) {
-                // Only * and ? are special; brackets are common in frame-range names like shot[0001-0100].exr.
-                QString regex = QRegularExpression::escape(term);
-                regex.replace(QStringLiteral("\\*"), QStringLiteral(".*"));
-                regex.replace(QStringLiteral("\\?"), QStringLiteral("."));
-                QRegularExpression pattern(QRegularExpression::anchoredPattern(regex),
-                                           QRegularExpression::CaseInsensitiveOption
-                                               | QRegularExpression::DotMatchesEverythingOption);
-                if (pattern.isValid()) {
-                    pattern.optimize();
-                    m_patterns.append(pattern);
-                }
-            } else {
-                m_terms.append(term);
-            }
-        }
-    }
-
-    bool matches(const QString &name) const
-    {
-        if (m_patterns.isEmpty() && m_terms.isEmpty()) {
-            return name.contains(m_text, Qt::CaseInsensitive);
-        }
-        for (const QRegularExpression &pattern : m_patterns) {
-            if (pattern.match(name).hasMatch()) {
-                return true;
-            }
-        }
-        for (const QString &term : m_terms) {
-            if (name.contains(term, Qt::CaseInsensitive)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-private:
-    QString m_text;
-    QList<QRegularExpression> m_patterns;
-    QStringList m_terms;
-};
-
 enum class BatchScaling { Original, CenterCrop, Fill, Fit, Stretch };
 
 QImage scaleBatchImage(const QImage &image, const QSize &size, BatchScaling scaling)
@@ -780,11 +723,16 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     if ((watched == m_imagePage || watched == m_imageViewport) && event->type() == QEvent::Resize) {
         layoutOverlayButtons();
+        if (watched == m_imageViewport) {
+            layoutSplitHeader();
+        }
     }
     // A click in either pane of the split viewer makes it the active one.
     if (event->type() == QEvent::MouseButtonPress && m_splitPane && !m_splitPane->isHidden()) {
         if (auto *widget = qobject_cast<QWidget *>(watched)) {
-            if (widget == m_splitPane || m_splitPane->isAncestorOf(widget)) {
+            QWidget *paneHeader = m_splitPane->header();
+            if (widget == m_splitPane || m_splitPane->isAncestorOf(widget)
+                || widget == paneHeader || paneHeader->isAncestorOf(widget)) {
                 setSplitPaneActive(true);
             } else if (widget == m_imageViewport) {
                 setSplitPaneActive(false);
@@ -1463,7 +1411,14 @@ void MainWindow::createCentralLayout()
             m_gridSearch->selectAll();
         }
     });
-    rightLayout->addWidget(navigationRow);
+    // The row holds the main navigation and, side by side, the split pane's own bar.
+    m_mainNavigation = navigationRow;
+    m_navigationRow = new QWidget(rightPanel);
+    auto *rowLayout = new QHBoxLayout(m_navigationRow);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    rowLayout->setSpacing(0);
+    rowLayout->addWidget(navigationRow, 1);
+    rightLayout->addWidget(m_navigationRow);
     connect(m_pathBar, &PathBar::pathActivated, this, &MainWindow::handlePathActivated);
     for (const QKeySequence &keys : {QKeySequence(Qt::ALT | Qt::Key_D), QKeySequence(Qt::Key_F4)}) {
         auto *shortcut = new QShortcut(keys, this);
@@ -1539,6 +1494,8 @@ void MainWindow::createCentralLayout()
     m_viewerSplitter->addWidget(m_imageViewport);
     m_viewerSplitter->addWidget(m_splitPane);
     imageLayout->addWidget(m_viewerSplitter, 0, 0);
+    connect(m_viewerSplitter, &QSplitter::splitterMoved, this, &MainWindow::layoutSplitHeader);
+    connect(m_contentStack, &QStackedWidget::currentChanged, this, &MainWindow::layoutSplitHeader);
     connect(m_splitPane, &SplitPane::closeRequested, this, [this]() {
         m_splitAction->setChecked(false);
     });
@@ -4205,6 +4162,7 @@ void MainWindow::setSplitEnabled(bool enabled)
         setSplitPaneActive(false);
         m_splitPane->hide();
         m_imageViewport->setHighlighted(false);
+        layoutSplitHeader();
         updateImageInfo();
         return;
     }
@@ -4223,6 +4181,7 @@ void MainWindow::setSplitEnabled(bool enabled)
     }
     setSplitPaneActive(true);
     QTimer::singleShot(0, this, &MainWindow::layoutOverlayButtons);
+    layoutSplitHeader();
 }
 
 void MainWindow::setSplitOrientation(Qt::Orientation orientation)
@@ -4241,6 +4200,7 @@ void MainWindow::setSplitOrientation(Qt::Orientation orientation)
         m_viewerSplitter->setSizes({total / 2, total - total / 2});
     }
     QTimer::singleShot(0, this, &MainWindow::layoutOverlayButtons);
+    layoutSplitHeader();
 }
 
 bool MainWindow::isSplitPaneActive() const
@@ -4278,4 +4238,30 @@ void MainWindow::syncSplitViews(ImageViewport *from)
     }
     ImageViewport *to = from == m_imageViewport ? m_splitPane->viewport() : m_imageViewport;
     to->matchView(*from);
+}
+
+void MainWindow::layoutSplitHeader()
+{
+    if (!m_splitPane || !m_navigationRow) {
+        return;
+    }
+    QWidget *header = m_splitPane->header();
+    const bool inRow = !m_splitPane->isHidden() && isViewerVisible()
+        && m_viewerSplitter->orientation() == Qt::Horizontal;
+    if (!inRow) {
+        if (header->parentWidget() != m_splitPane) {
+            m_splitPane->reclaimHeader();
+        }
+        m_mainNavigation->setMinimumWidth(0);
+        m_mainNavigation->setMaximumWidth(QWIDGETSIZE_MAX);
+        return;
+    }
+    if (header->parentWidget() != m_navigationRow) {
+        m_navigationRow->layout()->addWidget(header);
+        m_splitPane->setHeaderInline(true);
+        header->show();
+    }
+    // The main navigation ends where the split pane starts, so each bar sits over its own pane.
+    const int paneLeft = m_splitPane->mapTo(this, QPoint(0, 0)).x() - m_navigationRow->mapTo(this, QPoint(0, 0)).x();
+    m_mainNavigation->setFixedWidth(qMax(0, paneLeft));
 }
