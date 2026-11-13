@@ -22,6 +22,8 @@ the full file metadata, and export what you see with the view burned in.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
+Use the search field beside the path bar (Ctrl+F) to filter the current folder by name as you type. Clear it with the field's clear button or Esc while the field has focus.
+
 ## Requirements (Windows)
 
 | What | Version | Notes |
