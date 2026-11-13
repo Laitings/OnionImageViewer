@@ -11,6 +11,7 @@ enum class Kind {
     Up,
     FolderPanel,
     Open,
+    Search,
     FitToWindow,
     ActualSize,
     Metadata,

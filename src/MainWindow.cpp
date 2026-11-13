@@ -1058,6 +1058,7 @@ void MainWindow::createCentralLayout()
     m_gridSearch = new QLineEdit(navigationRow);
     m_gridSearch->setPlaceholderText(QStringLiteral("Search this folder"));
     m_gridSearch->setAccessibleName(QStringLiteral("Search this folder"));
+    m_gridSearch->addAction(Icons::icon(Icons::Kind::Search), QLineEdit::LeadingPosition);
     m_gridSearch->setClearButtonEnabled(true);
     m_gridSearch->setMaximumWidth(240);
     navigationLayout->addWidget(m_gridSearch);
