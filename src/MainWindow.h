@@ -14,6 +14,7 @@
 #include <memory>
 
 class QAction;
+class UpdateChecker;
 class QActionGroup;
 class FolderTreePanel;
 class ImageLoader;
@@ -158,6 +159,8 @@ private:
 
     std::shared_ptr<ImageLoader> m_imageLoader;
     FrameLoader *m_frameLoader = nullptr;
+    UpdateChecker *m_updateChecker = nullptr;
+    bool m_aboutOpen = false;
     PathBar *m_pathBar = nullptr;
     QLabel *m_infoLabel = nullptr;
     QLabel *m_pixelLabel = nullptr;

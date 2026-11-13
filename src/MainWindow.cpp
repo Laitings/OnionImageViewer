@@ -17,6 +17,7 @@
 #include "MetadataPanel.h"
 #include "OverlayButton.h"
 #include "PathBar.h"
+#include "UpdateChecker.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -24,6 +25,8 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -71,6 +74,7 @@
 #include <QStyle>
 #include <QStatusBar>
 #include <QSaveFile>
+#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QThread>
 #include <QThreadPool>
@@ -524,6 +528,25 @@ MainWindow::MainWindow(QWidget *parent)
     m_thumbnailRetryTimer.setSingleShot(true);
     m_thumbnailRetryTimer.setInterval(ThumbnailRetryDelayMs);
     connect(&m_thumbnailRetryTimer, &QTimer::timeout, this, &MainWindow::scheduleVisibleThumbnails);
+
+    m_updateChecker = new UpdateChecker(this);
+    connect(m_updateChecker, &UpdateChecker::finished, this,
+            [this](UpdateChecker::Status status, const QString &version, const QUrl &url) {
+        if (m_aboutOpen || status != UpdateChecker::Status::Available) {
+            return;
+        }
+        auto *notice = new QMessageBox(QMessageBox::Information, QStringLiteral("OnionImageViewer Update"),
+                                       QStringLiteral("Version %1 is available.").arg(version),
+                                       QMessageBox::Close, this);
+        notice->setModal(false);
+        notice->setAttribute(Qt::WA_DeleteOnClose);
+        auto *releasePage = notice->addButton(QStringLiteral("Open Release Page"), QMessageBox::ActionRole);
+        connect(releasePage, &QPushButton::clicked, notice, [url]() {
+            QDesktopServices::openUrl(url);
+        });
+        notice->show();
+    }, Qt::SingleShotConnection);
+    QTimer::singleShot(0, m_updateChecker, &UpdateChecker::check);
 }
 
 MainWindow::~MainWindow()
@@ -966,14 +989,78 @@ void MainWindow::createMenus()
 
 void MainWindow::showAbout()
 {
-    QMessageBox box(this);
+    const QScopedValueRollback<bool> aboutOpen(m_aboutOpen, true);
+    QUrl releaseUrl;
+    QDialog box(this);
     box.setWindowTitle(QStringLiteral("About OnionImageViewer"));
-    box.setIconPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
-    box.setTextFormat(Qt::RichText);
-    box.setText(QStringLiteral("<h3>OnionImageViewer %1</h3>"
-                               "<p>Image viewer and batch converter.</p>"
-                               "<p>Built with Qt %2.</p>")
-                    .arg(QCoreApplication::applicationVersion(), QString::fromLatin1(qVersion())));
+    auto *layout = new QGridLayout(&box);
+    auto *icon = new QLabel(&box);
+    icon->setPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
+    layout->addWidget(icon, 0, 0, Qt::AlignTop);
+
+    const QString installedVersion = QCoreApplication::applicationVersion();
+    auto *about = new QLabel(QStringLiteral("<h3>OnionImageViewer %1</h3>"
+                                            "<p>Image viewer and batch converter.</p>"
+                                            "<p>Built with Qt %2.</p>")
+                                 .arg(installedVersion.toHtmlEscaped(), QString::fromLatin1(qVersion())), &box);
+    about->setTextFormat(Qt::RichText);
+    layout->addWidget(about, 0, 1);
+
+    auto *status = new QLabel(&box);
+    status->setTextFormat(Qt::PlainText);
+    status->setWordWrap(true);
+    status->hide();
+    layout->addWidget(status, 1, 0, 1, 2);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &box);
+    auto *check = buttons->addButton(QStringLiteral("Check for Updates"), QDialogButtonBox::ActionRole);
+    auto *releasePage = buttons->addButton(QStringLiteral("Open Release Page"), QDialogButtonBox::ActionRole);
+    releasePage->hide();
+    layout->addWidget(buttons, 2, 0, 1, 2);
+    connect(buttons, &QDialogButtonBox::rejected, &box, &QDialog::reject);
+
+    connect(releasePage, &QPushButton::clicked, &box, [&releaseUrl, status]() {
+        if (!QDesktopServices::openUrl(releaseUrl)) {
+            status->setText(QStringLiteral("Could not open the release page in your browser."));
+        }
+    });
+    const auto showChecking = [status, check, releasePage]() {
+        releasePage->hide();
+        status->setText(QStringLiteral("Checking for updates…"));
+        status->show();
+        check->setEnabled(false);
+    };
+    connect(check, &QPushButton::clicked, &box, [this, showChecking]() {
+        showChecking();
+        m_updateChecker->check();
+    });
+    if (m_updateChecker->isChecking()) {
+        showChecking();
+    }
+    connect(m_updateChecker, &UpdateChecker::finished, &box,
+            [status, check, releasePage, &releaseUrl](UpdateChecker::Status result, const QString &version, const QUrl &url) {
+        check->setEnabled(true);
+        status->show();
+        switch (result) {
+        case UpdateChecker::Status::Available:
+            status->setText(QStringLiteral("Version %1 is available.").arg(version));
+            releaseUrl = url;
+            releasePage->show();
+            break;
+        case UpdateChecker::Status::UpToDate:
+            status->setText(QStringLiteral("OnionImageViewer is up to date."));
+            break;
+        case UpdateChecker::Status::NoStableRelease:
+            status->setText(QStringLiteral("GitHub has no published stable release yet."));
+            break;
+        case UpdateChecker::Status::NetworkError:
+            status->setText(QStringLiteral("Could not check for updates. Try again later."));
+            break;
+        case UpdateChecker::Status::InvalidVersion:
+            status->setText(QStringLiteral("Could not compare the installed and published versions."));
+            break;
+        }
+    });
     box.exec();
 }
 
