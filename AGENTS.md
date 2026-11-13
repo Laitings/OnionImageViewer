@@ -80,6 +80,13 @@ running the app on real files.
   Pins are stored by `MainWindow` (`folders/pinned`) whenever they change. Icons for pins come
   from the shell only for folders on local fixed disks; never ask the shell for icons of network
   or removable paths on the UI thread.
+- The split viewer (`SplitPane`) is a second pane inside the viewer page (`m_viewerSplitter`). It
+  owns its grid, `ImageViewport` and a `FrameLoader` with a smaller memory budget, and gets its
+  thumbnails through `loadThumbnailImage` (so it shares the thumbnail cache and never reads
+  OneDrive files). `MainWindow` routes viewer keys to the active pane (`handleViewerKey` →
+  `SplitPane::handleKey`), and viewer actions that zoom should act on `activeViewport()` and then
+  call `syncSplitViews()`. New display aids (like channels and clipping) should be applied to both
+  viewports.
 - Batch files, PowerShell scripts and the Inno Setup script use CRLF line endings
   (`.gitattributes`).
 

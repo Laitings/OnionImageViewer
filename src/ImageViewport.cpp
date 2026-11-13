@@ -301,6 +301,49 @@ void ImageViewport::zoomActualSize()
 void ImageViewport::paintEvent(QPaintEvent *event)
 {
     QPainter painter(this);
+    painter.save();
+    paintImage(painter, event);
+    painter.restore();
+    if (m_highlighted) {
+        painter.setPen(QPen(palette().color(QPalette::Highlight), 2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(QRectF(rect()).adjusted(1, 1, -1, -1));
+    }
+}
+
+void ImageViewport::setHighlighted(bool highlighted)
+{
+    if (m_highlighted != highlighted) {
+        m_highlighted = highlighted;
+        update();
+    }
+}
+
+void ImageViewport::matchView(const ImageViewport &other)
+{
+    if (m_image.isNull() || other.m_image.isNull()) {
+        return;
+    }
+    if (other.m_fitMode) {
+        fitToWindow();
+        return;
+    }
+    const double zoom = clampedZoom(other.m_zoom * double(other.m_image.width()) / double(m_image.width()));
+    m_fitMode = false;
+    if (!qFuzzyCompare(zoom, m_zoom)) {
+        m_zoom = zoom;
+        invalidateScaledCache();
+        m_smoothRescaleTimer.start();
+    }
+    // The pan is the image centre's offset from the viewport centre in screen pixels, so with
+    // the same width on screen the same offset shows the same part of the image.
+    m_pan = other.m_pan;
+    clampPan();
+    update();
+}
+
+void ImageViewport::paintImage(QPainter &painter, QPaintEvent *event)
+{
     painter.fillRect(event->rect(), QColor(31, 31, 31));
 
     if (m_image.isNull()) {
@@ -444,6 +487,7 @@ void ImageViewport::wheelEvent(QWheelEvent *event)
     const double factor = qPow(1.2, steps);
     setZoomAroundPoint(m_zoom * factor, event->position());
     event->accept();
+    emit viewChangedByUser();
 }
 
 void ImageViewport::mousePressEvent(QMouseEvent *event)
@@ -481,6 +525,7 @@ void ImageViewport::mouseMoveEvent(QMouseEvent *event)
         m_pan += QPointF(delta);
         clampPan();
         update();
+        emit viewChangedByUser();
         updateHoveredPixel(event->position());
         event->accept();
         return;
