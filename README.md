@@ -74,10 +74,6 @@ collects the .exe, Qt (via `windeployqt`), the MSVC runtime and the ARRI LUTs in
 `installer\Output\OnionImageViewer-Setup-<version>.exe`. The version comes from
 `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`.
 
-A GitHub Actions workflow (`.github/workflows/release-installer.yml`) builds the same installer
-on Windows when a release is published and attaches it to the release. The release tag is the
-version: tag `v1.2.0` gives `OnionImageViewer-Setup-1.2.0.exe`.
-
 ## Code layout
 
 ```
