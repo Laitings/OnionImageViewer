@@ -111,6 +111,10 @@ private:
             path.lineTo(20.5, 10.5);
             p->drawPath(path);
             break;
+        case Kind::Search:
+            p->drawEllipse(QPointF(10, 10), 6, 6);
+            p->drawLine(QPointF(14.25, 14.25), QPointF(20, 20));
+            break;
         case Kind::FitToWindow:
             // Four corners pointing out.
             for (const QPointF &corner : {QPointF(4, 4), QPointF(20, 4), QPointF(20, 20), QPointF(4, 20)}) {
