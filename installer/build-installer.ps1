@@ -8,11 +8,13 @@
 #
 #   powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 #   ... -QtDir C:\Qt\6.11.0\msvc2022_64 -ArriLutDir Q:\Davinci_Shared_LUTs\Arri -SkipBuild
+#   ... -Version 1.2.0     (overrides the version from CMakeLists.txt; the release workflow passes the tag)
 
 param(
     [string]$QtDir = "",
     [string]$ArriLutDir = "Q:\Davinci_Shared_LUTs\Arri",
     [string]$BuildDir = "",
+    [string]$Version = "",
     [switch]$SkipBuild
 )
 
@@ -62,10 +64,15 @@ $iscc = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) { Fail "Inno Setup 6 not found. Install it with: winget install JRSoftware.InnoSetup" }
 
-# --- Version from CMakeLists.txt ----------------------------------------------------------------
-$cmakeText = Get-Content (Join-Path $repo "CMakeLists.txt") -Raw
-if ($cmakeText -notmatch 'project\(OnionImageViewer\s+VERSION\s+([0-9.]+)') { Fail "No VERSION in CMakeLists.txt" }
-$version = $matches[1]
+# --- Version: -Version if given, otherwise from CMakeLists.txt ---------------------------------
+if ($Version) {
+    $version = $Version -replace '^[vV]', ''
+} else {
+    $cmakeText = Get-Content (Join-Path $repo "CMakeLists.txt") -Raw
+    if ($cmakeText -notmatch 'project\(OnionImageViewer\s+VERSION\s+([0-9.]+)') { Fail "No VERSION in CMakeLists.txt" }
+    $version = $matches[1]
+}
+if ($version -notmatch '^[0-9A-Za-z.\-+]+$') { Fail "Version '$version' has characters a file name can't hold." }
 Write-Host "Version: $version"
 
 # --- Build --------------------------------------------------------------------------------------
@@ -111,7 +118,8 @@ if (Test-Path $luts) {
 # --- Installer ----------------------------------------------------------------------------------
 Step "Compiling the installer"
 New-Item -ItemType Directory $outputDir -Force | Out-Null
-& $iscc /Q "/DAppVersion=$version" "/DStageDir=$stageDir" "/DOutputDir=$outputDir" (Join-Path $installerDir "OnionImageViewer.iss")
+$numericVersion = if ($version -match '^(\d+(\.\d+){0,3})') { $matches[1] } else { "0.0.0" }
+& $iscc /Q "/DAppVersion=$version" "/DNumericVersion=$numericVersion" "/DStageDir=$stageDir" "/DOutputDir=$outputDir" (Join-Path $installerDir "OnionImageViewer.iss")
 if ($LASTEXITCODE -ne 0) { Fail "Inno Setup failed." }
 
 $setup = Join-Path $outputDir "OnionImageViewer-Setup-$version.exe"

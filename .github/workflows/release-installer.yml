@@ -1,0 +1,106 @@
+# Builds the Windows installer and attaches it to a GitHub release.
+#
+# Runs when a release is published (Releases > Draft a new release > Publish). The tag becomes the
+# installer's version: tag v1.2.0 gives OnionImageViewer-Setup-1.2.0.exe on that release.
+# It can also be started by hand (Actions > Release installer > Run workflow), and it runs on pull
+# requests that touch the installer; those runs keep the setup .exe as a workflow artifact only.
+name: Release installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release-installer.yml
+      - installer/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.11.*"
+  VCPKG_ROOT: ${{ github.workspace }}\vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtimageformats
+          cache: true
+
+      # vcpkg checked out in full, so the builtin-baseline pinned in vcpkg.json resolves.
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone --quiet https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+
+      - name: Cache vcpkg packages (OpenEXR)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Install Inno Setup and Ninja if missing
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "release") {
+            $v = "${{ github.event.release.tag_name }}" -replace '^[vV]', ''
+          } else {
+            $cmake = Get-Content CMakeLists.txt -Raw
+            if ($cmake -notmatch 'project\(OnionImageViewer\s+VERSION\s+([0-9.]+)') { throw "No VERSION in CMakeLists.txt" }
+            $v = "$($matches[1])-dev.${{ github.run_number }}"
+          }
+          if ($v -notmatch '^[0-9A-Za-z.\-+]+$') { throw "Tag '$v' can't be used as a version." }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Build the app and the installer
+        shell: pwsh
+        run: >
+          ./installer/build-installer.ps1
+          -QtDir "$env:QT_ROOT_DIR"
+          -ArriLutDir ""
+          -Version "${{ steps.version.outputs.version }}"
+
+      - name: Keep the installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OnionImageViewer-Setup-${{ steps.version.outputs.version }}
+          path: installer/Output/OnionImageViewer-Setup-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+
+      - name: Attach the installer to the release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release upload "${{ github.event.release.tag_name }}"
+          "installer/Output/OnionImageViewer-Setup-${{ steps.version.outputs.version }}.exe"
+          --clobber --repo "${{ github.repository }}"
