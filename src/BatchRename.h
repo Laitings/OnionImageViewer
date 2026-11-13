@@ -30,6 +30,14 @@ struct Options
     int counterStart = 1;
     int counterStep = 1;
     int counterPadding = 3;
+    // Remove characters from position removeFrom to removeTo (1-based, both included) of the new
+    // name before the extension (and before the frame number of a sequence). With removeFromEnd,
+    // positions count from the end, so 1 to 1 removes the last character. Done after the pattern
+    // and before find and replace. Positions past the end of a name are ignored.
+    bool removeEnabled = false;
+    int removeFrom = 1;
+    int removeTo = 1;
+    bool removeFromEnd = false;
     // Files that form an image sequence (name ending in a frame number, two or more selected with
     // the same prefix and extension, or one named like name.0001.ext) keep their frame numbers:
     // {name} is the part before the frame number, the sequence takes one counter value, and the

@@ -199,6 +199,31 @@ BatchRenameDialog::BatchRenameDialog(const QStringList &paths, const BatchRename
     counterRow->addStretch(1);
     form->addRow(QStringLiteral("Counter {n}"), counterRow);
 
+    m_remove = new QCheckBox(QStringLiteral("From"), this);
+    m_remove->setToolTip(QStringLiteral("Remove the characters from one position to another (both included) in the new name.\n"
+                                        "The extension and the frame number of a sequence are never touched.\n"
+                                        "From the end, 1 to 1 removes the last character."));
+    m_removeFrom = new QSpinBox(this);
+    m_removeTo = new QSpinBox(this);
+    for (QSpinBox *spin : {m_removeFrom, m_removeTo}) {
+        spin->setRange(1, 255);
+        spin->setEnabled(false);
+        connect(m_remove, &QCheckBox::toggled, spin, &QWidget::setEnabled);
+    }
+    m_removeSide = new QComboBox(this);
+    m_removeSide->addItem(QStringLiteral("counted from the start"), false);
+    m_removeSide->addItem(QStringLiteral("counted from the end"), true);
+    m_removeSide->setEnabled(false);
+    connect(m_remove, &QCheckBox::toggled, m_removeSide, &QWidget::setEnabled);
+    auto *removeRow = new QHBoxLayout;
+    removeRow->addWidget(m_remove);
+    removeRow->addWidget(m_removeFrom);
+    removeRow->addWidget(new QLabel(QStringLiteral("to"), this));
+    removeRow->addWidget(m_removeTo);
+    removeRow->addWidget(m_removeSide);
+    removeRow->addStretch(1);
+    form->addRow(QStringLiteral("Remove characters"), removeRow);
+
     m_find = new QLineEdit(this);
     m_find->setClearButtonEnabled(true);
     m_replace = new QLineEdit(this);
@@ -265,13 +290,13 @@ BatchRenameDialog::BatchRenameDialog(const QStringList &paths, const BatchRename
     for (QLineEdit *edit : {m_pattern, m_find, m_replace}) {
         connect(edit, &QLineEdit::textChanged, this, &BatchRenameDialog::schedulePreview);
     }
-    for (QSpinBox *spin : {m_counterStart, m_counterStep, m_counterPadding}) {
+    for (QSpinBox *spin : {m_counterStart, m_counterStep, m_counterPadding, m_removeFrom, m_removeTo}) {
         connect(spin, &QSpinBox::valueChanged, this, &BatchRenameDialog::schedulePreview);
     }
-    for (QCheckBox *check : {m_regex, m_matchCase, m_keepFrames}) {
+    for (QCheckBox *check : {m_regex, m_matchCase, m_keepFrames, m_remove}) {
         connect(check, &QCheckBox::toggled, this, &BatchRenameDialog::schedulePreview);
     }
-    for (QComboBox *box : {m_nameCase, m_extensionCase}) {
+    for (QComboBox *box : {m_nameCase, m_extensionCase, m_removeSide}) {
         connect(box, &QComboBox::currentIndexChanged, this, &BatchRenameDialog::schedulePreview);
     }
 
@@ -305,6 +330,10 @@ void BatchRenameDialog::setOptions(const BatchRename::Options &values)
     selectData(m_nameCase, int(values.nameCase));
     selectData(m_extensionCase, int(values.extensionCase));
     m_keepFrames->setChecked(values.keepFrameNumbers);
+    m_remove->setChecked(values.removeEnabled);
+    m_removeFrom->setValue(values.removeFrom);
+    m_removeTo->setValue(values.removeTo);
+    m_removeSide->setCurrentIndex(values.removeFromEnd ? 1 : 0);
 }
 
 BatchRename::Options BatchRenameDialog::options() const
@@ -321,6 +350,10 @@ BatchRename::Options BatchRenameDialog::options() const
     values.nameCase = static_cast<BatchRename::CaseChange>(m_nameCase->currentData().toInt());
     values.extensionCase = static_cast<BatchRename::CaseChange>(m_extensionCase->currentData().toInt());
     values.keepFrameNumbers = m_keepFrames->isChecked();
+    values.removeEnabled = m_remove->isChecked();
+    values.removeFrom = m_removeFrom->value();
+    values.removeTo = m_removeTo->value();
+    values.removeFromEnd = m_removeSide->currentIndex() == 1;
     return values;
 }
 

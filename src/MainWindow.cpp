@@ -222,6 +222,10 @@ const QString SettingsRenameExtensionCase = QStringLiteral("rename/extensionCase
 const QString SettingsRenameCounterStart = QStringLiteral("rename/counterStart");
 const QString SettingsRenameCounterStep = QStringLiteral("rename/counterStep");
 const QString SettingsRenameCounterDigits = QStringLiteral("rename/counterDigits");
+const QString SettingsRenameRemove = QStringLiteral("rename/remove");
+const QString SettingsRenameRemoveFrom = QStringLiteral("rename/removeFrom");
+const QString SettingsRenameRemoveTo = QStringLiteral("rename/removeTo");
+const QString SettingsRenameRemoveFromEnd = QStringLiteral("rename/removeFromEnd");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
@@ -2961,6 +2965,10 @@ void MainWindow::batchRename(const QStringList &paths)
     options.counterStart = settings.value(SettingsRenameCounterStart, options.counterStart).toInt();
     options.counterStep = settings.value(SettingsRenameCounterStep, options.counterStep).toInt();
     options.counterPadding = settings.value(SettingsRenameCounterDigits, options.counterPadding).toInt();
+    options.removeEnabled = settings.value(SettingsRenameRemove, false).toBool();
+    options.removeFrom = settings.value(SettingsRenameRemoveFrom, options.removeFrom).toInt();
+    options.removeTo = settings.value(SettingsRenameRemoveTo, options.removeTo).toInt();
+    options.removeFromEnd = settings.value(SettingsRenameRemoveFromEnd, false).toBool();
 
     BatchRenameDialog dialog(paths, options, this);
     if (dialog.exec() != QDialog::Accepted) {
@@ -2977,6 +2985,10 @@ void MainWindow::batchRename(const QStringList &paths)
     settings.setValue(SettingsRenameCounterStart, options.counterStart);
     settings.setValue(SettingsRenameCounterStep, options.counterStep);
     settings.setValue(SettingsRenameCounterDigits, options.counterPadding);
+    settings.setValue(SettingsRenameRemove, options.removeEnabled);
+    settings.setValue(SettingsRenameRemoveFrom, options.removeFrom);
+    settings.setValue(SettingsRenameRemoveTo, options.removeTo);
+    settings.setValue(SettingsRenameRemoveFromEnd, options.removeFromEnd);
     const QList<BatchRename::Move> moves = dialog.moves();
     if (!moves.isEmpty()) {
         runRename(moves, false);

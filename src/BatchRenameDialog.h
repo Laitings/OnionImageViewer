@@ -58,6 +58,10 @@ private:
     QComboBox *m_nameCase = nullptr;
     QComboBox *m_extensionCase = nullptr;
     QCheckBox *m_keepFrames = nullptr;
+    QCheckBox *m_remove = nullptr;
+    QSpinBox *m_removeFrom = nullptr;
+    QSpinBox *m_removeTo = nullptr;
+    QComboBox *m_removeSide = nullptr;
     QTreeView *m_view = nullptr;
     BatchRenamePreview *m_preview = nullptr;
     QLabel *m_summary = nullptr;
