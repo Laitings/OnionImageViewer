@@ -20,7 +20,7 @@ the full file metadata, and export what you see with the view burned in.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
-- **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Optional width and height limits shrink images proportionally. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
+- **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Keep the original size or set an output width and height and choose center crop, scale with crop, fit with black padding, or stretch. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 

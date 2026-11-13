@@ -36,6 +36,7 @@
 #include <QProcess>
 #include <QUrl>
 #include <QColor>
+#include <QColorSpace>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -64,6 +65,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
+#include <QPainter>
 #include <QPixmap>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -103,6 +105,48 @@
 #endif
 
 namespace {
+enum class BatchScaling { Original, CenterCrop, Fill, Fit, Stretch };
+
+QImage scaleBatchImage(const QImage &image, const QSize &size, BatchScaling scaling)
+{
+    if (image.isNull() || scaling == BatchScaling::Original || image.size() == size) {
+        return image;
+    }
+    if (scaling == BatchScaling::Stretch) {
+        return image.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    QRectF source(image.rect());
+    QRectF target{QPointF(), QSizeF(size)};
+    if (scaling == BatchScaling::Fit) {
+        const QSize fitted = image.size().scaled(size, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
+        target.setSize(fitted);
+        target.moveTopLeft(QPoint((size.width() - fitted.width()) / 2, (size.height() - fitted.height()) / 2));
+    } else if (scaling == BatchScaling::CenterCrop) {
+        const QSize visible = image.size().boundedTo(size);
+        source = QRect((image.width() - visible.width()) / 2, (image.height() - visible.height()) / 2,
+                       visible.width(), visible.height());
+        target = QRect((size.width() - visible.width()) / 2, (size.height() - visible.height()) / 2,
+                       visible.width(), visible.height());
+    } else {
+        // Sample the center of the source directly, avoiding an oversized intermediate image.
+        const qreal scale = qMax(qreal(size.width()) / image.width(), qreal(size.height()) / image.height());
+        source.setSize(QSizeF(size) / scale);
+        source.moveCenter(QRectF(image.rect()).center());
+    }
+
+    QImage output(size, image.hasAlphaChannel() ? QImage::Format_ARGB32 : QImage::Format_RGB32);
+    if (!output.isNull()) {
+        output.fill(Qt::black);
+        output.setColorSpace(image.colorSpace());
+        QPainter painter(&output);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        painter.drawImage(target, image, source);
+    }
+    return output;
+}
+
 struct ExportFormat
 {
     QString name;
@@ -2242,8 +2286,13 @@ void MainWindow::batchConvert(const QStringList &paths)
     quality->setRange(1, 100);
     quality->setValue(95);
     form->addRow(QStringLiteral("Quality"), quality);
-    auto *resize = new QCheckBox(QStringLiteral("Fit within width and height"), &dialog);
-    form->addRow(QStringLiteral("Size"), resize);
+    auto *scalingBox = new QComboBox(&dialog);
+    scalingBox->addItem(QStringLiteral("Original size"), int(BatchScaling::Original));
+    scalingBox->addItem(QStringLiteral("Center crop with no resizing"), int(BatchScaling::CenterCrop));
+    scalingBox->addItem(QStringLiteral("Scale full frame with crop"), int(BatchScaling::Fill));
+    scalingBox->addItem(QStringLiteral("Scale entire image to fit"), int(BatchScaling::Fit));
+    scalingBox->addItem(QStringLiteral("Stretch frame to all corners"), int(BatchScaling::Stretch));
+    form->addRow(QStringLiteral("Scaling"), scalingBox);
     auto *width = new QSpinBox(&dialog);
     auto *height = new QSpinBox(&dialog);
     for (auto *dimension : {width, height}) {
@@ -2251,11 +2300,13 @@ void MainWindow::batchConvert(const QStringList &paths)
         dimension->setSuffix(QStringLiteral(" px"));
         dimension->setValue(1920);
         dimension->setEnabled(false);
-        connect(resize, &QCheckBox::toggled, dimension, &QWidget::setEnabled);
+        connect(scalingBox, &QComboBox::currentIndexChanged, dimension, [scalingBox, dimension]() {
+            dimension->setEnabled(scalingBox->currentData().toInt() != int(BatchScaling::Original));
+        });
     }
     height->setValue(1080);
-    form->addRow(QStringLiteral("Max width"), width);
-    form->addRow(QStringLiteral("Max height"), height);
+    form->addRow(QStringLiteral("Output width"), width);
+    form->addRow(QStringLiteral("Output height"), height);
     auto *folder = new QLineEdit(QDir::toNativeSeparators(m_currentFolderPath), &dialog);
     folder->setReadOnly(true);
     auto *browse = new QPushButton(QStringLiteral("Browse…"), &dialog);
@@ -2284,7 +2335,8 @@ void MainWindow::batchConvert(const QStringList &paths)
     }
 
     const ExportFormat format = formats.at(formatBox->currentIndex());
-    const QSize bounds = resize->isChecked() ? QSize(width->value(), height->value()) : QSize();
+    const QSize outputSize(width->value(), height->value());
+    const auto scaling = static_cast<BatchScaling>(scalingBox->currentData().toInt());
     const QString target = QDir::fromNativeSeparators(folder->text());
     const int qualityValue = quality->value();
     auto *progress = new QProgressDialog(QStringLiteral("Converting images…"), QStringLiteral("Cancel"),
@@ -2299,7 +2351,7 @@ void MainWindow::batchConvert(const QStringList &paths)
     updateEditActions();
     const auto loader = m_imageLoader;
     const auto input = m_input;
-    m_batchPool.start([this, progress, sources, format, bounds, target, qualityValue, loader, input]() {
+    m_batchPool.start([this, progress, sources, format, outputSize, scaling, target, qualityValue, loader, input]() {
         QStringList errors;
         int converted = 0;
         int attempted = 0;
@@ -2312,11 +2364,8 @@ void MainWindow::batchConvert(const QStringList &paths)
             const auto result = loader->load(source);
             QString error = result.error;
             if (result.isValid()) {
-                QImage image = ColorTransform::toDisplay(result.image, ColorTransform::View::None, input);
-                if (bounds.isValid() && (image.width() > bounds.width() || image.height() > bounds.height())) {
-                    const QSize fitted = image.size().scaled(bounds, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
-                    image = image.scaled(fitted, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-                }
+                const QImage image = scaleBatchImage(
+                    ColorTransform::toDisplay(result.image, ColorTransform::View::None, input), outputSize, scaling);
                 QTemporaryFile temporary(output.filePath(QStringLiteral(".onion-convert-XXXXXX")));
                 if (temporary.open()) {
                     QImageWriter writer(&temporary, format.writer);
