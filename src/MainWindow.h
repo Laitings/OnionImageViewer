@@ -34,6 +34,7 @@ class QToolButton;
 class OverlayButton;
 class PathBar;
 class MetadataPanel;
+class ScopesPanel;
 class QDockWidget;
 class QKeyEvent;
 class QDragEnterEvent;
@@ -132,6 +133,7 @@ private:
     void playbackTick();
     bool handleViewerKey(QKeyEvent *event);
     void refreshCurrentDisplay();
+    void updateScopes();
     void setCompareMode(CompareMode mode);
     void pinCurrentImage();
     void updateCompare();
@@ -211,6 +213,9 @@ private:
     MetadataPanel *m_metadataPanel = nullptr;
     QDockWidget *m_metadataDock = nullptr;
     QAction *m_metadataAction = nullptr;
+    ScopesPanel *m_scopesPanel = nullptr;
+    QDockWidget *m_scopesDock = nullptr;
+    QAction *m_scopesAction = nullptr;
     QTimer m_metadataTimer;
     QThreadPool m_metadataPool;
     int m_metadataGeneration = 0;
