@@ -58,6 +58,9 @@ public:
 
     // The shown image: as read, and as displayed. Null while browsing before any image.
     QString currentPath() const { return m_currentPath; }
+    // The file the pane is about: the image under the cursor in its grid while browsing,
+    // otherwise the shown image. Used for the metadata panel, Copy Path and Show in Explorer.
+    QString selectedPath() const;
     const QImage &sourceImage() const { return m_source; }
     const QImage &displayImage() const { return m_display; }
     // One line for the status bar: name, size, position in the folder (or the folder's count).
@@ -75,6 +78,8 @@ public:
 signals:
     // A new image is shown, or the pane switched between its grid and its viewer.
     void contentChanged();
+    // The current item of the pane's grid changed.
+    void selectionChanged();
     // A newly opened image is on screen (not when stepping with the arrow keys).
     void imageOpened();
     void closeRequested();

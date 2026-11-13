@@ -1534,7 +1534,18 @@ void MainWindow::createCentralLayout()
     connect(m_splitPane, &SplitPane::closeRequested, this, [this]() {
         m_splitAction->setChecked(false);
     });
-    connect(m_splitPane, &SplitPane::contentChanged, this, &MainWindow::updateImageInfo);
+    connect(m_splitPane, &SplitPane::contentChanged, this, [this]() {
+        updateImageInfo();
+        if (isSplitPaneActive()) {
+            scheduleMetadata();
+            updateScopes();
+        }
+    });
+    connect(m_splitPane, &SplitPane::selectionChanged, this, [this]() {
+        if (isSplitPaneActive()) {
+            scheduleMetadata();
+        }
+    });
     connect(m_splitPane, &SplitPane::imageOpened, this, [this]() {
         if (m_splitSyncAction->isChecked()) {
             syncSplitViews(m_imageViewport);
@@ -1548,6 +1559,9 @@ void MainWindow::createCentralLayout()
     });
     connect(m_splitPane->viewport(), &ImageViewport::hoveredPixelChanged, this, [this](const QPoint &pixel) {
         showPixelReadout(pixel, m_splitPane->sourceImage(), m_splitPane->displayImage());
+        if (isSplitPaneActive()) {
+            m_scopesPanel->setHoveredPixel(pixel);
+        }
     });
 
     // Close / previous / next float over the image (placed in layoutOverlayButtons) and only show
@@ -2082,16 +2096,20 @@ void MainWindow::refreshCurrentDisplay()
 // Hands the viewed image to the scopes panel (which only computes while it is shown).
 void MainWindow::updateScopes()
 {
-    if (!isViewerVisible() || m_currentSourceImage.isNull()) {
+    // In the split viewer the scopes show the active pane's image.
+    const bool split = isSplitPaneActive();
+    const QImage &source = split ? m_splitPane->sourceImage() : m_currentSourceImage;
+    const QImage &display = split ? m_splitPane->displayImage() : m_currentDisplayImage;
+    if (!isViewerVisible() || source.isNull() || (split && m_splitPane->isBrowsing())) {
         m_scopesPanel->clear();
         return;
     }
-    const ColorTransform::View shown = ColorTransform::resolveView(m_view, m_currentSourceImage);
+    const ColorTransform::View shown = ColorTransform::resolveView(m_view, source);
     QString viewName = ColorTransform::displayName(shown);
     if (shown == ColorTransform::View::CustomLut && ColorTransform::hasLut()) {
         viewName = QFileInfo(ColorTransform::lutFilePath()).fileName();
     }
-    m_scopesPanel->setImages(m_currentSourceImage, m_currentDisplayImage, m_input, viewName);
+    m_scopesPanel->setImages(source, display, m_input, viewName);
 }
 
 void MainWindow::setCompareMode(CompareMode mode)
@@ -2192,7 +2210,9 @@ void MainWindow::updateImageInfo()
 void MainWindow::updatePixelReadout(const QPoint &pixel)
 {
     m_hoveredPixel = pixel;
-    m_scopesPanel->setHoveredPixel(isViewerVisible() ? pixel : QPoint(-1, -1));
+    if (!isSplitPaneActive()) {
+        m_scopesPanel->setHoveredPixel(isViewerVisible() ? pixel : QPoint(-1, -1));
+    }
     showPixelReadout(pixel, m_currentSourceImage, m_currentDisplayImage);
 }
 
@@ -2382,6 +2402,9 @@ void MainWindow::setFullScreenMode(bool on)
 
 QString MainWindow::currentPath() const
 {
+    if (isViewerVisible() && isSplitPaneActive()) {
+        return m_splitPane->selectedPath();
+    }
     if (isViewerVisible() && !m_currentImagePath.isEmpty()) {
         return m_currentImagePath;
     }
@@ -4230,6 +4253,9 @@ void MainWindow::setSplitPaneActive(bool active)
         m_imageViewport->setFocus(Qt::OtherFocusReason);
     }
     updateImageInfo();
+    // Metadata and scopes follow the active pane.
+    scheduleMetadata();
+    updateScopes();
 }
 
 ImageViewport *MainWindow::activeViewport() const

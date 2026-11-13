@@ -108,6 +108,7 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     }
 
     connect(m_grid, &QListWidget::itemActivated, this, &SplitPane::openItem);
+    connect(m_grid, &QListWidget::currentItemChanged, this, &SplitPane::selectionChanged);
     connect(m_pathBar, &PathBar::pathActivated, this, [this](const QString &path) {
         const QFileInfo info(path);
         if (info.isDir()) {
@@ -195,6 +196,17 @@ void SplitPane::browse(const QString &folderPath, const QString &selectPath)
 void SplitPane::showBrowser()
 {
     browse(m_folderPath.isEmpty() && !m_currentPath.isEmpty() ? QFileInfo(m_currentPath).absolutePath() : m_folderPath);
+}
+
+QString SplitPane::selectedPath() const
+{
+    if (isBrowsing()) {
+        if (const QListWidgetItem *item = m_grid->currentItem()) {
+            return item->data(PathRole).toString();
+        }
+        return m_folderPath;
+    }
+    return m_currentPath;
 }
 
 bool SplitPane::isBrowsing() const
