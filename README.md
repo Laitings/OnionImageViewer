@@ -23,7 +23,7 @@ the full file metadata, and export what you see with the view burned in.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
-On startup, the app checks GitHub for a newer stable release and offers to open its download page if one is available. Check again from Help → About OnionImageViewer → Check for Updates.
+On startup, the app checks GitHub for a newer stable release and offers to open its download page if one is available. Check again from Help → Check for Updates or from the About dialog.
 
 Use the search field beside the path bar (Ctrl+F) to filter the current folder by name as you type. Clear it with the field's clear button or Esc while the field has focus.
 

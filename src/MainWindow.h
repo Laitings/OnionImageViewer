@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QMainWindow>
 #include <QPersistentModelIndex>
+#include <QPointer>
 #include <QHash>
 #include <QSet>
 #include <QThreadPool>
@@ -14,6 +15,7 @@
 #include <memory>
 
 class QAction;
+class QDialog;
 class UpdateChecker;
 class QActionGroup;
 class FolderTreePanel;
@@ -76,7 +78,8 @@ private:
     void chooseLutFile();
     void chooseArriLutFolder();
     void findArriLuts();
-    void showAbout();
+    // Shows About or opens the standalone update check, with shared result handling.
+    void showUpdateDialog(bool about);
     void updateColorButton(ColorTransform::View view);
     void setInput(ColorTransform::Input input);
     void updateInputActions();
@@ -166,7 +169,7 @@ private:
     std::shared_ptr<ImageLoader> m_imageLoader;
     FrameLoader *m_frameLoader = nullptr;
     UpdateChecker *m_updateChecker = nullptr;
-    bool m_aboutOpen = false;
+    QPointer<QDialog> m_updateDialog;
     PathBar *m_pathBar = nullptr;
     QLineEdit *m_gridSearch = nullptr;
     int m_gridSearchMatches = 0;

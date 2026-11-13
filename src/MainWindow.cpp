@@ -74,7 +74,6 @@
 #include <QStyle>
 #include <QStatusBar>
 #include <QSaveFile>
-#include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QThread>
 #include <QThreadPool>
@@ -532,7 +531,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_updateChecker = new UpdateChecker(this);
     connect(m_updateChecker, &UpdateChecker::finished, this,
             [this](UpdateChecker::Status status, const QString &version, const QUrl &url) {
-        if (m_aboutOpen || status != UpdateChecker::Status::Available) {
+        if (m_updateDialog || status != UpdateChecker::Status::Available) {
             return;
         }
         auto *notice = new QMessageBox(QMessageBox::Information, QStringLiteral("OnionImageViewer Update"),
@@ -992,43 +991,52 @@ void MainWindow::createMenus()
     inputMenu->addActions(m_inputGroup->actions());
 
     QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("Help"));
-    helpMenu->addAction(QStringLiteral("About OnionImageViewer"), this, &MainWindow::showAbout);
+    helpMenu->addAction(QStringLiteral("Check for Updates"), this, [this]() { showUpdateDialog(false); });
+    helpMenu->addAction(QStringLiteral("About OnionImageViewer"), this, [this]() { showUpdateDialog(true); });
 }
 
-void MainWindow::showAbout()
+void MainWindow::showUpdateDialog(bool about)
 {
-    const QScopedValueRollback<bool> aboutOpen(m_aboutOpen, true);
-    QUrl releaseUrl;
-    QDialog box(this);
-    box.setWindowTitle(QStringLiteral("About OnionImageViewer"));
-    auto *layout = new QGridLayout(&box);
-    auto *icon = new QLabel(&box);
-    icon->setPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
-    layout->addWidget(icon, 0, 0, Qt::AlignTop);
+    if (m_updateDialog) {
+        m_updateDialog->raise();
+        m_updateDialog->activateWindow();
+        return;
+    }
+    auto *box = new QDialog(this);
+    m_updateDialog = box;
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setWindowTitle(about ? QStringLiteral("About OnionImageViewer") : QStringLiteral("Check for Updates"));
+    connect(box, &QDialog::finished, this, [this]() { m_updateDialog.clear(); });
+    auto *layout = new QGridLayout(box);
+    if (about) {
+        auto *icon = new QLabel(box);
+        icon->setPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
+        layout->addWidget(icon, 0, 0, Qt::AlignTop);
 
-    const QString installedVersion = QCoreApplication::applicationVersion();
-    auto *about = new QLabel(QStringLiteral("<h3>OnionImageViewer %1</h3>"
-                                            "<p>Image viewer and batch converter.</p>"
-                                            "<p>Built with Qt %2.</p>")
-                                 .arg(installedVersion.toHtmlEscaped(), QString::fromLatin1(qVersion())), &box);
-    about->setTextFormat(Qt::RichText);
-    layout->addWidget(about, 0, 1);
+        const QString installedVersion = QCoreApplication::applicationVersion();
+        auto *details = new QLabel(QStringLiteral("<h3>OnionImageViewer %1</h3>"
+                                                  "<p>Image viewer and batch converter.</p>"
+                                                  "<p>Built with Qt %2.</p>")
+                                       .arg(installedVersion.toHtmlEscaped(), QString::fromLatin1(qVersion())), box);
+        details->setTextFormat(Qt::RichText);
+        layout->addWidget(details, 0, 1);
+    }
 
-    auto *status = new QLabel(&box);
+    auto *status = new QLabel(box);
     status->setTextFormat(Qt::PlainText);
     status->setWordWrap(true);
     status->hide();
     layout->addWidget(status, 1, 0, 1, 2);
 
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &box);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, box);
     auto *check = buttons->addButton(QStringLiteral("Check for Updates"), QDialogButtonBox::ActionRole);
     auto *releasePage = buttons->addButton(QStringLiteral("Open Release Page"), QDialogButtonBox::ActionRole);
     releasePage->hide();
     layout->addWidget(buttons, 2, 0, 1, 2);
-    connect(buttons, &QDialogButtonBox::rejected, &box, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::rejected, box, &QDialog::reject);
 
-    connect(releasePage, &QPushButton::clicked, &box, [&releaseUrl, status]() {
-        if (!QDesktopServices::openUrl(releaseUrl)) {
+    connect(releasePage, &QPushButton::clicked, box, [releasePage, status]() {
+        if (!QDesktopServices::openUrl(releasePage->property("releaseUrl").toUrl())) {
             status->setText(QStringLiteral("Could not open the release page in your browser."));
         }
     });
@@ -1038,21 +1046,18 @@ void MainWindow::showAbout()
         status->show();
         check->setEnabled(false);
     };
-    connect(check, &QPushButton::clicked, &box, [this, showChecking]() {
+    connect(check, &QPushButton::clicked, box, [this, showChecking]() {
         showChecking();
         m_updateChecker->check();
     });
-    if (m_updateChecker->isChecking()) {
-        showChecking();
-    }
-    connect(m_updateChecker, &UpdateChecker::finished, &box,
-            [status, check, releasePage, &releaseUrl](UpdateChecker::Status result, const QString &version, const QUrl &url) {
+    connect(m_updateChecker, &UpdateChecker::finished, box,
+            [status, check, releasePage](UpdateChecker::Status result, const QString &version, const QUrl &url) {
         check->setEnabled(true);
         status->show();
         switch (result) {
         case UpdateChecker::Status::Available:
             status->setText(QStringLiteral("Version %1 is available.").arg(version));
-            releaseUrl = url;
+            releasePage->setProperty("releaseUrl", url);
             releasePage->show();
             break;
         case UpdateChecker::Status::UpToDate:
@@ -1069,7 +1074,16 @@ void MainWindow::showAbout()
             break;
         }
     });
-    box.exec();
+    if (about) {
+        if (m_updateChecker->isChecking()) {
+            showChecking();
+        }
+        box->open();
+    } else {
+        showChecking();
+        box->show();
+        m_updateChecker->check();
+    }
 }
 
 void MainWindow::createToolbar()
