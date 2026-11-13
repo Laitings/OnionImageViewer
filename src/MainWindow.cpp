@@ -3,8 +3,10 @@
 #include "ColorTransform.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
+#include "FileItemDelegate.h"
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
+#include "Icons.h"
 #include "ImageViewport.h"
 #include "Metadata.h"
 #include "MetadataPanel.h"
@@ -67,6 +69,9 @@
 #include <QThreadPool>
 #include <QTimer>
 #include <QToolBar>
+#include <QHeaderView>
+#include <QLocale>
+#include <QStandardItemModel>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -94,6 +99,8 @@ const QString SettingsRecentLuts = QStringLiteral("view/recentLuts");
 const QString SettingsRecentImages = QStringLiteral("file/recentImages");
 const QString SettingsExportFolder = QStringLiteral("export/folder");
 const QString SettingsThumbnailSize = QStringLiteral("grid/thumbnailSize");
+const QString SettingsGridView = QStringLiteral("grid/view");
+const QString SettingsDetailsColumns = QStringLiteral("grid/detailsColumns");
 const QString SettingsExportFormat = QStringLiteral("export/format");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
@@ -109,6 +116,39 @@ constexpr int LargeThumbnailResolution = 256;
 constexpr int MinThumbnailDisplaySize = 64;
 constexpr int MaxThumbnailDisplaySize = 256;
 constexpr int ThumbnailDisplayStep = 16;
+constexpr int ListIconSize = 20;
+
+// "EXR image", "File folder", "PDF file": the Type column in Details and Tiles.
+QString fileTypeText(const QFileInfo &info, bool image)
+{
+    if (info.isDir()) {
+        return QStringLiteral("File folder");
+    }
+    const QString suffix = info.suffix().toUpper();
+    if (suffix.isEmpty()) {
+        return QStringLiteral("File");
+    }
+    return image ? QStringLiteral("%1 image").arg(suffix) : QStringLiteral("%1 file").arg(suffix);
+}
+
+// Sizes as Explorer shows them: whole kilobytes, rounded up.
+QString fileSizeText(const QLocale &locale, qint64 bytes)
+{
+    if (bytes < 1024) {
+        return bytes == 1 ? QStringLiteral("1 byte") : QStringLiteral("%1 bytes").arg(bytes);
+    }
+    return QStringLiteral("%1 KB").arg(locale.toString((bytes + 1023) / 1024));
+}
+
+const char *gridViewKey(int view)
+{
+    switch (view) {
+    case 1: return "list";
+    case 2: return "details";
+    case 3: return "tiles";
+    default: return "icons";
+    }
+}
 constexpr int ThumbnailScheduleDelayMs = 60;
 constexpr int MaxPendingThumbnails = 32;
 constexpr int ThumbnailPriorityVisible = 1;
@@ -467,7 +507,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (wheel->modifiers().testFlag(Qt::ControlModifier)) {
             const int delta = wheel->angleDelta().y();
             if (delta != 0) {
-                setThumbnailDisplaySize(m_thumbnailDisplaySize + (delta > 0 ? ThumbnailDisplayStep : -ThumbnailDisplayStep));
+                stepGridView(delta > 0 ? 1 : -1);
             }
             return true;
         }
@@ -503,10 +543,45 @@ void MainWindow::createActions()
     m_toggleFoldersAction->setCheckable(true);
     connect(m_toggleFoldersAction, &QAction::toggled, this, &MainWindow::setFolderPanelVisible);
 
-    m_backAction = new QAction(QStringLiteral("Back"), this);
+    m_backAction = new QAction(Icons::icon(Icons::Kind::Back), QStringLiteral("Back"), this);
     m_backAction->setShortcut(QKeySequence::Back);
+    m_backAction->setToolTip(QStringLiteral("Back (Alt+Left)"));
     m_backAction->setEnabled(false);
     connect(m_backAction, &QAction::triggered, this, &MainWindow::navigateBack);
+
+    m_upAction = new QAction(Icons::icon(Icons::Kind::Up), QStringLiteral("Up One Folder"), this);
+    m_upAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
+    m_upAction->setToolTip(QStringLiteral("Up one folder (Alt+Up)"));
+    m_upAction->setEnabled(false);
+    connect(m_upAction, &QAction::triggered, this, &MainWindow::navigateUp);
+
+    // File grid views, like Explorer's (same shortcuts).
+    m_gridViewGroup = new QActionGroup(this);
+    m_gridViewGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+    const struct {
+        const char *text;
+        GridView view;
+        int size;
+        Icons::Kind icon;
+    } gridViews[] = {
+        {"Extra Large Icons", GridView::Icons, 256, Icons::Kind::ViewIcons},
+        {"Large Icons", GridView::Icons, 192, Icons::Kind::ViewIcons},
+        {"Medium Icons", GridView::Icons, 128, Icons::Kind::ViewIcons},
+        {"Small Icons", GridView::Icons, 64, Icons::Kind::ViewIcons},
+        {"List", GridView::List, 0, Icons::Kind::ViewList},
+        {"Details", GridView::Details, 0, Icons::Kind::ViewDetails},
+        {"Tiles", GridView::Tiles, 0, Icons::Kind::ViewTiles},
+    };
+    int gridViewNumber = 1;
+    for (const auto &entry : gridViews) {
+        auto *action = new QAction(Icons::icon(entry.icon), QString::fromLatin1(entry.text), m_gridViewGroup);
+        action->setCheckable(true);
+        action->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | (Qt::Key_0 + gridViewNumber++)));
+        action->setData(static_cast<int>(entry.view) * 1000 + entry.size);
+        connect(action, &QAction::triggered, this, [this, view = entry.view, size = entry.size]() {
+            setGridView(view, size);
+        });
+    }
 
     m_openImageAction = new QAction(QStringLiteral("Open Image..."), this);
     m_openImageAction->setShortcut(QKeySequence::Open);
@@ -705,6 +780,11 @@ void MainWindow::createMenus()
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("View"));
     viewMenu->addAction(m_backAction);
+    viewMenu->addAction(m_upAction);
+    QMenu *gridViewMenu = viewMenu->addMenu(QStringLiteral("Files As"));
+    gridViewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
+    gridViewMenu->addSeparator();
+    gridViewMenu->addActions(m_gridViewGroup->actions().mid(4));
     viewMenu->addSeparator();
     viewMenu->addAction(m_toggleFoldersAction);
     viewMenu->addSeparator();
@@ -786,8 +866,19 @@ void MainWindow::createToolbar()
     QToolBar *toolbar = addToolBar(QStringLiteral("Main"));
     toolbar->setObjectName(QStringLiteral("MainToolbar"));
     toolbar->setMovable(false);
-    toolbar->addAction(m_backAction);
-    toolbar->addSeparator();
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolbar->setIconSize(QSize(20, 20));
+
+    m_toggleFoldersAction->setIcon(Icons::icon(Icons::Kind::FolderPanel));
+    m_toggleFoldersAction->setToolTip(QStringLiteral("Show or hide the folder tree"));
+    m_openImageAction->setIcon(Icons::icon(Icons::Kind::Open));
+    m_openImageAction->setToolTip(QStringLiteral("Open an image (Ctrl+O)"));
+    m_fitToWindowAction->setIcon(Icons::icon(Icons::Kind::FitToWindow));
+    m_fitToWindowAction->setToolTip(QStringLiteral("Fit to window (F)"));
+    m_actualSizeAction->setIcon(Icons::icon(Icons::Kind::ActualSize));
+    m_actualSizeAction->setToolTip(QStringLiteral("100% zoom (1)"));
+    m_metadataAction->setIcon(Icons::icon(Icons::Kind::Metadata));
+
     toolbar->addAction(m_toggleFoldersAction);
     toolbar->addSeparator();
     toolbar->addAction(m_openImageAction);
@@ -801,7 +892,8 @@ void MainWindow::createToolbar()
     m_colorButton = new QToolButton(toolbar);
     m_colorButton->setMenu(m_colorMenu);
     m_colorButton->setPopupMode(QToolButton::InstantPopup);
-    m_colorButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_colorButton->setIcon(Icons::icon(Icons::Kind::Color));
+    m_colorButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_colorButton->setToolTip(QStringLiteral("View transform / LUT"));
     toolbar->addWidget(m_colorButton);
     updateColorButton(m_view);
@@ -816,7 +908,7 @@ void MainWindow::updateColorButton(ColorTransform::View view)
     if (view == ColorTransform::View::Auto && isViewerVisible() && !m_currentSourceImage.isNull()) {
         text = QStringLiteral("Auto: %1").arg(ColorTransform::displayName(ColorTransform::resolveView(view, m_currentSourceImage)));
     }
-    m_colorButton->setText(QStringLiteral("Color: %1").arg(text));
+    m_colorButton->setText(text);
 }
 
 void MainWindow::createCentralLayout()
@@ -831,8 +923,23 @@ void MainWindow::createCentralLayout()
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(0);
 
-    m_pathBar = new PathBar(rightPanel);
-    rightLayout->addWidget(m_pathBar);
+    // Back and Up sit left of the path, like in Explorer.
+    auto *navigationRow = new QWidget(rightPanel);
+    auto *navigationLayout = new QHBoxLayout(navigationRow);
+    navigationLayout->setContentsMargins(4, 0, 0, 0);
+    navigationLayout->setSpacing(2);
+    m_pathBar = new PathBar(navigationRow);
+    for (QAction *action : {m_backAction, m_upAction}) {
+        auto *button = new QToolButton(navigationRow);
+        button->setDefaultAction(action);
+        button->setAutoRaise(true);
+        button->setIconSize(QSize(18, 18));
+        button->setFixedSize(m_pathBar->minimumHeight() + 4, m_pathBar->minimumHeight());
+        button->setFocusPolicy(Qt::NoFocus);
+        navigationLayout->addWidget(button);
+    }
+    navigationLayout->addWidget(m_pathBar, 1);
+    rightLayout->addWidget(navigationRow);
     connect(m_pathBar, &PathBar::pathActivated, this, &MainWindow::handlePathActivated);
     for (const QKeySequence &keys : {QKeySequence(Qt::ALT | Qt::Key_D), QKeySequence(Qt::Key_F4)}) {
         auto *shortcut = new QShortcut(keys, this);
@@ -854,6 +961,39 @@ void MainWindow::createCentralLayout()
     m_fileGrid->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_fileGrid, &QWidget::customContextMenuRequested, this, &MainWindow::showGridContextMenu);
     m_fileGrid->setTextElideMode(Qt::ElideRight);
+    m_fileDelegate = new FileItemDelegate(m_fileGrid);
+    m_fileGrid->setItemDelegate(m_fileDelegate);
+
+    // Column header for the Details view (the grid itself is a list; the delegate lines the
+    // columns up with this header).
+    m_detailsHeader = new QHeaderView(Qt::Horizontal, rightPanel);
+    auto *headerModel = new QStandardItemModel(0, FileItemDelegate::ColumnCount, m_detailsHeader);
+    headerModel->setHorizontalHeaderLabels({QStringLiteral("Name"), QStringLiteral("Date modified"),
+                                            QStringLiteral("Type"), QStringLiteral("Size")});
+    m_detailsHeader->setModel(headerModel);
+    m_detailsHeader->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_detailsHeader->setSectionResizeMode(QHeaderView::Interactive);
+    m_detailsHeader->setStretchLastSection(false);
+    m_detailsHeader->setSectionsClickable(false);
+    m_detailsHeader->setMinimumSectionSize(50);
+    m_detailsHeader->setFixedHeight(m_detailsHeader->fontMetrics().height() + 10);
+    m_detailsHeader->resizeSection(FileItemDelegate::NameColumn, 380);
+    m_detailsHeader->resizeSection(FileItemDelegate::ModifiedColumn, 150);
+    m_detailsHeader->resizeSection(FileItemDelegate::TypeColumn, 120);
+    m_detailsHeader->resizeSection(FileItemDelegate::SizeColumn, 100);
+    m_detailsHeader->hide();
+    m_fileDelegate->setHeader(m_detailsHeader);
+    connect(m_detailsHeader, &QHeaderView::sectionResized, this, [this]() {
+        if (m_gridView == GridView::Details) {
+            m_fileGrid->doItemsLayout();
+            m_fileGrid->viewport()->update();
+        }
+    });
+    connect(m_fileGrid->horizontalScrollBar(), &QScrollBar::valueChanged, this, [this](int value) {
+        m_detailsHeader->setOffset(value - m_fileGrid->frameWidth());
+        m_thumbnailScheduleTimer.start();
+    });
+    m_detailsHeader->setOffset(-m_fileGrid->frameWidth());
 
     auto *imagePage = new QWidget(m_contentStack);
     m_imagePage = imagePage;
@@ -879,6 +1019,7 @@ void MainWindow::createCentralLayout()
 
     m_contentStack->addWidget(m_fileGrid);
     m_contentStack->addWidget(imagePage);
+    rightLayout->addWidget(m_detailsHeader);
     rightLayout->addWidget(m_contentStack, 1);
 
     m_splitter->addWidget(m_folderTreePanel);
@@ -911,13 +1052,11 @@ void MainWindow::createCentralLayout()
     m_thumbnailSizeSlider->setPageStep(ThumbnailDisplayStep * 2);
     m_thumbnailSizeSlider->setFixedWidth(150);
     m_thumbnailSizeSlider->setValue(m_thumbnailDisplaySize);
-    m_thumbnailSizeSlider->setToolTip(QStringLiteral("Thumbnail size (Ctrl + scroll wheel)"));
+    m_thumbnailSizeSlider->setToolTip(QStringLiteral("Thumbnail size (Ctrl + scroll wheel; right-click the files for more views)"));
     m_thumbnailSizeSlider->setFocusPolicy(Qt::NoFocus);
     statusBar()->addPermanentWidget(m_thumbnailSizeSlider);
     connect(m_thumbnailSizeSlider, &QSlider::valueChanged, this, &MainWindow::setThumbnailDisplaySize);
-    connect(m_contentStack, &QStackedWidget::currentChanged, this, [this]() {
-        m_thumbnailSizeSlider->setVisible(m_contentStack->currentWidget() == m_fileGrid);
-    });
+    connect(m_contentStack, &QStackedWidget::currentChanged, this, &MainWindow::updateGridChrome);
     connect(m_imageViewport, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updatePixelReadout);
     m_imageViewport->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_imageViewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewerContextMenu);
@@ -929,6 +1068,9 @@ void MainWindow::createCentralLayout()
         m_thumbnailScheduleTimer.start();
     });
     connect(m_fileGrid->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this]() {
+        m_thumbnailScheduleTimer.start();
+    });
+    connect(m_fileGrid->horizontalScrollBar(), &QScrollBar::rangeChanged, this, [this]() {
         m_thumbnailScheduleTimer.start();
     });
     connect(m_closeImageButton, &OverlayButton::clicked, this, [this]() {
@@ -979,7 +1121,15 @@ void MainWindow::loadSettings()
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
 
-    setThumbnailDisplaySize(settings.value(SettingsThumbnailSize, 128).toInt());
+    m_detailsHeader->restoreState(settings.value(SettingsDetailsColumns).toByteArray());
+    const QString gridViewKeyValue = settings.value(SettingsGridView).toString();
+    GridView gridView = GridView::Icons;
+    for (GridView view : {GridView::List, GridView::Details, GridView::Tiles}) {
+        if (gridViewKeyValue == QLatin1String(gridViewKey(static_cast<int>(view)))) {
+            gridView = view;
+        }
+    }
+    setGridView(gridView, settings.value(SettingsThumbnailSize, 128).toInt());
 
     findArriLuts();
     const QString lutFile = settings.value(SettingsLutFile).toString();
@@ -1008,6 +1158,7 @@ void MainWindow::saveSettings()
     settings.setValue(SettingsMainWindowState, saveState());
     settings.setValue(SettingsFoldersVisible, m_folderTreePanel->isVisible());
     settings.setValue(SettingsSplitterState, m_splitter->saveState());
+    settings.setValue(SettingsDetailsColumns, m_detailsHeader->saveState());
 }
 
 void MainWindow::openImage()
@@ -1772,6 +1923,11 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
         });
         menu.addSeparator();
     }
+    QMenu *viewMenu = menu.addMenu(Icons::icon(Icons::Kind::ViewIcons), QStringLiteral("View"));
+    viewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
+    viewMenu->addSeparator();
+    viewMenu->addActions(m_gridViewGroup->actions().mid(4));
+    menu.addSeparator();
     menu.addAction(QStringLiteral("Copy Path"), this, [this, path]() {
         copyPathToClipboard(path);
     });
@@ -1999,7 +2155,9 @@ void MainWindow::updateViewTransformActions(ColorTransform::View view)
 
 QSize MainWindow::thumbnailResolution() const
 {
-    const int resolution = m_thumbnailDisplaySize <= SmallThumbnailResolution ? SmallThumbnailResolution : LargeThumbnailResolution;
+    const int resolution = m_gridView != GridView::Icons || m_thumbnailDisplaySize <= SmallThumbnailResolution
+        ? SmallThumbnailResolution
+        : LargeThumbnailResolution;
     return QSize(resolution, resolution);
 }
 
@@ -2007,31 +2165,144 @@ void MainWindow::setThumbnailDisplaySize(int size)
 {
     size = qBound(MinThumbnailDisplaySize, size, MaxThumbnailDisplaySize);
     size = (size + ThumbnailDisplayStep / 2) / ThumbnailDisplayStep * ThumbnailDisplayStep;
-    const QSize oldResolution = thumbnailResolution();
-    const bool changed = size != m_thumbnailDisplaySize;
-    m_thumbnailDisplaySize = size;
-
-    if (m_thumbnailSizeSlider && m_thumbnailSizeSlider->value() != size) {
-        const QSignalBlocker blocker(m_thumbnailSizeSlider);
-        m_thumbnailSizeSlider->setValue(size);
-    }
-    if (!changed) {
+    if (size == m_thumbnailDisplaySize && m_gridView == GridView::Icons) {
         return;
     }
-    // Keep the item under view in place while the grid reflows.
-    QListWidgetItem *anchor = m_fileGrid->currentItem();
-    m_fileGrid->setIconSize(QSize(size, size));
-    m_fileGrid->setGridSize(QSize(qMax(size + 42, 112), size + 40));
-    if (anchor) {
-        m_fileGrid->scrollToItem(anchor);
-    }
-    QSettings().setValue(SettingsThumbnailSize, size);
+    setGridView(GridView::Icons, size);
     statusBar()->showMessage(QStringLiteral("Thumbnails %1 px").arg(size), 1500);
+}
+
+void MainWindow::setGridView(GridView view, int iconSize)
+{
+    const QSize oldResolution = thumbnailResolution();
+    m_gridView = view;
+    if (view == GridView::Icons && iconSize > 0) {
+        iconSize = qBound(MinThumbnailDisplaySize, iconSize, MaxThumbnailDisplaySize);
+        m_thumbnailDisplaySize = (iconSize + ThumbnailDisplayStep / 2) / ThumbnailDisplayStep * ThumbnailDisplayStep;
+    }
+    if (m_thumbnailSizeSlider && m_thumbnailSizeSlider->value() != m_thumbnailDisplaySize) {
+        const QSignalBlocker blocker(m_thumbnailSizeSlider);
+        m_thumbnailSizeSlider->setValue(m_thumbnailDisplaySize);
+    }
+
+    applyGridView();
+
+    QSettings settings;
+    settings.setValue(SettingsGridView, QLatin1String(gridViewKey(static_cast<int>(view))));
+    settings.setValue(SettingsThumbnailSize, m_thumbnailDisplaySize);
 
     if (thumbnailResolution() != oldResolution) {
         resetThumbnails(); // bigger than 128 px: make sharper ones (cached separately)
     } else {
         m_thumbnailScheduleTimer.start(); // more (or fewer) fit on screen now
+    }
+}
+
+void MainWindow::applyGridView()
+{
+    // Keep the selected item in view while the grid reflows.
+    QListWidgetItem *anchor = m_fileGrid->currentItem();
+    const int size = m_thumbnailDisplaySize;
+
+    switch (m_gridView) {
+    case GridView::Icons:
+        m_fileDelegate->setLayout(FileItemDelegate::Layout::Standard);
+        m_fileGrid->setViewMode(QListView::IconMode);
+        // Set these explicitly: setViewMode() leaves alone what another view set before.
+        m_fileGrid->setMovement(QListView::Static);
+        m_fileGrid->setFlow(QListView::LeftToRight);
+        m_fileGrid->setWrapping(true);
+        m_fileGrid->setIconSize(QSize(size, size));
+        m_fileGrid->setGridSize(QSize(qMax(size + 42, 112), size + 40));
+        m_fileDelegate->setStandardItemSize(m_fileGrid->gridSize() - QSize(8, 8));
+        m_fileGrid->setSpacing(10);
+        m_fileGrid->setWordWrap(true);
+        break;
+    case GridView::List:
+        m_fileDelegate->setLayout(FileItemDelegate::Layout::Standard);
+        m_fileDelegate->setStandardItemSize(QSize());
+        m_fileGrid->setViewMode(QListView::ListMode);
+        m_fileGrid->setFlow(QListView::TopToBottom);
+        m_fileGrid->setWrapping(true);
+        m_fileGrid->setIconSize(QSize(ListIconSize, ListIconSize));
+        m_fileGrid->setGridSize(QSize(280, ListIconSize + 8));
+        m_fileGrid->setSpacing(0);
+        m_fileGrid->setWordWrap(false);
+        break;
+    case GridView::Details:
+        m_fileDelegate->setLayout(FileItemDelegate::Layout::Details);
+        m_fileGrid->setViewMode(QListView::ListMode);
+        m_fileGrid->setFlow(QListView::TopToBottom);
+        m_fileGrid->setWrapping(false);
+        m_fileGrid->setIconSize(QSize(FileItemDelegate::DetailsIconSize, FileItemDelegate::DetailsIconSize));
+        m_fileGrid->setGridSize(QSize());
+        m_fileGrid->setSpacing(0);
+        m_fileGrid->setWordWrap(false);
+        break;
+    case GridView::Tiles:
+        m_fileDelegate->setLayout(FileItemDelegate::Layout::Tiles);
+        m_fileGrid->setViewMode(QListView::ListMode);
+        m_fileGrid->setFlow(QListView::LeftToRight);
+        m_fileGrid->setWrapping(true);
+        m_fileGrid->setIconSize(QSize(FileItemDelegate::TileIconSize, FileItemDelegate::TileIconSize));
+        m_fileGrid->setGridSize(QSize(FileItemDelegate::TileWidth + 8, FileItemDelegate::TileHeight + 8));
+        m_fileGrid->setSpacing(0);
+        m_fileGrid->setWordWrap(false);
+        break;
+    }
+    m_fileGrid->setResizeMode(QListView::Adjust);
+    m_fileGrid->setUniformItemSizes(true);
+    m_fileGrid->doItemsLayout();
+    m_fileGrid->viewport()->update();
+    m_detailsHeader->setOffset(m_fileGrid->horizontalScrollBar()->value() - m_fileGrid->frameWidth());
+    if (anchor) {
+        m_fileGrid->scrollToItem(anchor);
+    }
+    updateGridViewActions();
+    updateGridChrome();
+}
+
+void MainWindow::stepGridView(int direction)
+{
+    // From big to small: icon sizes, then List, Details, Tiles (the order Explorer uses).
+    if (m_gridView == GridView::Icons) {
+        const int size = m_thumbnailDisplaySize + direction * ThumbnailDisplayStep;
+        if (size < MinThumbnailDisplaySize) {
+            setGridView(GridView::List);
+        } else {
+            setThumbnailDisplaySize(size);
+        }
+        return;
+    }
+    const QList<GridView> order = {GridView::Tiles, GridView::Details, GridView::List};
+    const int next = order.indexOf(m_gridView) + direction;
+    if (next >= order.size()) {
+        setGridView(GridView::Icons, MinThumbnailDisplaySize);
+    } else if (next >= 0) {
+        setGridView(order.at(next));
+    }
+}
+
+void MainWindow::updateGridViewActions()
+{
+    if (!m_gridViewGroup) {
+        return;
+    }
+    const int current = static_cast<int>(m_gridView) * 1000 + (m_gridView == GridView::Icons ? m_thumbnailDisplaySize : 0);
+    for (QAction *action : m_gridViewGroup->actions()) {
+        action->setChecked(action->data().toInt() == current);
+    }
+}
+
+// The size slider and the Details header belong to the grid, so they hide while an image is open.
+void MainWindow::updateGridChrome()
+{
+    const bool gridShown = m_contentStack && m_contentStack->currentWidget() == m_fileGrid;
+    if (m_thumbnailSizeSlider) {
+        m_thumbnailSizeSlider->setVisible(gridShown);
+    }
+    if (m_detailsHeader) {
+        m_detailsHeader->setVisible(gridShown && m_gridView == GridView::Details);
     }
 }
 
@@ -2114,6 +2385,7 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_fileGrid->clear();
 
     QFileIconProvider iconProvider;
+    const QLocale locale;
     // Look the placeholder icon up once: each standardIcon() call is slow (~17 ms with the
     // Windows 11 style), which made a 5000-file folder take over a minute to open.
     const QIcon imagePlaceholderIcon = style()->standardIcon(QStyle::SP_FileIcon);
@@ -2126,6 +2398,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         item->setData(FilePathRole, folderInfo.absoluteFilePath());
         item->setData(IsFolderRole, true);
         item->setData(IsImageRole, false);
+        item->setData(FileItemDelegate::ModifiedTextRole, locale.toString(folderInfo.lastModified(), QLocale::ShortFormat));
+        item->setData(FileItemDelegate::TypeTextRole, fileTypeText(folderInfo, false));
         item->setToolTip(folderInfo.absoluteFilePath());
     }
 
@@ -2142,6 +2416,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         item->setData(IsFolderRole, false);
         item->setData(IsImageRole, image);
         item->setData(ThumbnailLoadedRole, false);
+        item->setData(FileItemDelegate::ModifiedTextRole, locale.toString(fileInfo.lastModified(), QLocale::ShortFormat));
+        item->setData(FileItemDelegate::TypeTextRole, fileTypeText(fileInfo, image));
+        item->setData(FileItemDelegate::SizeTextRole, fileSizeText(locale, fileInfo.size()));
         item->setToolTip(filePath);
 
         if (image) {
@@ -2174,10 +2451,33 @@ void MainWindow::navigateBack()
     updateBackAction();
 }
 
+void MainWindow::navigateUp()
+{
+    QDir parent(m_currentFolderPath);
+    if (m_currentFolderPath.isEmpty() || !parent.cdUp()) {
+        return;
+    }
+    const QString child = QDir::cleanPath(m_currentFolderPath);
+    populateFileGrid(parent.absolutePath());
+    // Select the folder we came from, like Explorer.
+    for (int row = 0; row < m_fileGrid->count(); ++row) {
+        QListWidgetItem *item = m_fileGrid->item(row);
+        if (QDir::cleanPath(item->data(FilePathRole).toString()) == child) {
+            m_fileGrid->setCurrentItem(item);
+            m_fileGrid->scrollToItem(item);
+            break;
+        }
+    }
+}
+
 void MainWindow::updateBackAction()
 {
     if (m_backAction) {
         m_backAction->setEnabled(!m_folderHistory.isEmpty());
+    }
+    if (m_upAction) {
+        QDir parent(m_currentFolderPath);
+        m_upAction->setEnabled(!m_currentFolderPath.isEmpty() && parent.cdUp());
     }
 }
 
