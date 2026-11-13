@@ -26,10 +26,13 @@ QString key(const QString &path);
 
 // The files of paths that are in the same sequence as paths[index], as indices into paths,
 // ordered by frame number (so 9 comes before 10 even without zero padding, and other files
-// sorted in between don't matter). Empty when the file has no frame number or is the only one.
+// sorted in between don't matter). When no other file shares the prefix, files whose names differ
+// only in their numbers count instead ("Door_v0010001_00001.png", "Door_v0010002_00002.png").
+// Empty when the file has no frame number or is the only one.
 QVector<int> framesOf(const QStringList &paths, int index);
 
-// A readable name for the sequence, with the frame range: "A001_C002.[1001-1200].dpx".
+// A readable name for the sequence, with the frame range: "A001_C002.[1001-1200].dpx". Numbers
+// that change besides the frame number show as '#'.
 QString displayName(const QStringList &paths, const QVector<int> &frames);
 
 } // namespace Sequence
