@@ -32,6 +32,8 @@ class QKeyEvent;
 class QDragEnterEvent;
 class QDropEvent;
 class QSlider;
+class QHeaderView;
+class FileItemDelegate;
 class QSplitter;
 class QStackedWidget;
 
@@ -80,6 +82,7 @@ private:
     void handleGridItemActivated(QListWidgetItem *item);
     void populateFileGrid(const QString &folderPath, bool addToHistory = true);
     void navigateBack();
+    void navigateUp();
     void updateBackAction();
     void showGrid();
     void showCurrentImage();
@@ -91,6 +94,13 @@ private:
     void setImageListFromFolder(const QString &folderPath);
     void scheduleVisibleThumbnails();
     void setThumbnailDisplaySize(int size);
+    // Explorer-style views for the file grid. Icons uses m_thumbnailDisplaySize.
+    enum class GridView { Icons, List, Details, Tiles };
+    void setGridView(GridView view, int iconSize = 0);
+    void applyGridView();
+    void stepGridView(int direction); // Ctrl+scroll wheel: sizes, then List, Details, Tiles
+    void updateGridViewActions();
+    void updateGridChrome();
     QSize thumbnailResolution() const;
     void requestThumbnail(QListWidgetItem *item, int priority);
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending);
@@ -179,6 +189,8 @@ private:
     OverlayButton *m_nextImageButton = nullptr;
     QAction *m_toggleFoldersAction = nullptr;
     QAction *m_backAction = nullptr;
+    QAction *m_upAction = nullptr;
+    QActionGroup *m_gridViewGroup = nullptr;
     QAction *m_openImageAction = nullptr;
     QAction *m_fitToWindowAction = nullptr;
     QAction *m_actualSizeAction = nullptr;
@@ -207,5 +219,8 @@ private:
     int m_thumbnailGeneration = 0;
     int m_thumbnailDisplaySize = 128;
     QSlider *m_thumbnailSizeSlider = nullptr;
+    GridView m_gridView = GridView::Icons;
+    FileItemDelegate *m_fileDelegate = nullptr;
+    QHeaderView *m_detailsHeader = nullptr;
     int m_currentImageIndex = -1;
 };

@@ -62,6 +62,10 @@ qt_add_executable(OnionImageViewer
     src/OverlayButton.cpp
     src/PathBar.h
     src/PathBar.cpp
+    src/Icons.h
+    src/Icons.cpp
+    src/FileItemDelegate.h
+    src/FileItemDelegate.cpp
 )
 
 target_link_libraries(OnionImageViewer
