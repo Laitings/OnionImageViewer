@@ -22,6 +22,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDesktopServices>
@@ -113,6 +114,7 @@ const QString SettingsRecentImages = QStringLiteral("file/recentImages");
 const QString SettingsExportFolder = QStringLiteral("export/folder");
 const QString SettingsThumbnailSize = QStringLiteral("grid/thumbnailSize");
 const QString SettingsGridView = QStringLiteral("grid/view");
+const QString SettingsImagesOnly = QStringLiteral("grid/imagesOnly");
 const QString SettingsDetailsColumns = QStringLiteral("grid/detailsColumns");
 const QString SettingsExportFormat = QStringLiteral("export/format");
 constexpr int MaxRecentImages = 10;
@@ -1171,7 +1173,15 @@ void MainWindow::createCentralLayout()
     m_gridSearch->setClearButtonEnabled(true);
     m_gridSearch->setMaximumWidth(240);
     navigationLayout->addWidget(m_gridSearch);
-    connect(m_gridSearch, &QLineEdit::textChanged, this, &MainWindow::applyGridSearch);
+    connect(m_gridSearch, &QLineEdit::textChanged, this, &MainWindow::applyGridFilters);
+    m_imagesOnly = new QCheckBox(QStringLiteral("Images only"), navigationRow);
+    m_imagesOnly->setToolTip(QStringLiteral("Hide files the viewer does not support"));
+    m_imagesOnly->setChecked(QSettings().value(SettingsImagesOnly, false).toBool());
+    navigationLayout->addWidget(m_imagesOnly);
+    connect(m_imagesOnly, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue(SettingsImagesOnly, checked);
+        applyGridFilters();
+    });
     auto *searchShortcut = new QShortcut(QKeySequence::Find, this);
     connect(searchShortcut, &QShortcut::activated, this, [this]() {
         if (m_gridSearch->isVisible()) {
@@ -1803,8 +1813,8 @@ void MainWindow::updateImageInfo()
             m_infoLabel->clear();
             return;
         }
-        QString text = !isViewerVisible() && !m_gridSearch->text().trimmed().isEmpty()
-            ? QStringLiteral("%1 of %2 items").arg(m_gridSearchMatches).arg(m_fileGrid->count())
+        QString text = !isViewerVisible() && (m_imagesOnly->isChecked() || !m_gridSearch->text().trimmed().isEmpty())
+            ? QStringLiteral("%1 of %2 items").arg(m_visibleGridItems).arg(m_fileGrid->count())
             : QStringLiteral("%1 images").arg(m_currentImagePaths.size());
         const QList<QListWidgetItem *> selected = m_fileGrid->selectedItems();
         if (!selected.isEmpty()) {
@@ -2250,9 +2260,19 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
     updateEditActions();
     QMenu menu(this);
     if (item) {
-        menu.addAction(QStringLiteral("Open"), this, [this, item]() {
-            handleGridItemActivated(item);
-        });
+        if (item->data(IsFolderRole).toBool() || item->data(IsImageRole).toBool()) {
+            menu.addAction(QStringLiteral("Open"), this, [this, item]() {
+                handleGridItemActivated(item);
+            });
+        } else {
+            menu.addAction(QStringLiteral("Open in Default App"), this, [this, path]() {
+                if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+                    QMessageBox::warning(this, QStringLiteral("Could Not Open File"),
+                                         QStringLiteral("Windows could not open %1 in its default app.")
+                                             .arg(QDir::toNativeSeparators(path)));
+                }
+            });
+        }
         menu.addSeparator();
         menu.addAction(m_cutAction);
         menu.addAction(m_copyFilesAction);
@@ -3053,6 +3073,7 @@ void MainWindow::updateGridChrome()
 {
     const bool gridShown = m_contentStack && m_contentStack->currentWidget() == m_fileGrid;
     m_gridSearch->setVisible(gridShown);
+    m_imagesOnly->setVisible(gridShown);
     if (m_thumbnailSizeSlider) {
         m_thumbnailSizeSlider->setVisible(gridShown);
         if (m_sliderSpacer) {
@@ -3191,8 +3212,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         }
     }
 
-    if (!m_gridSearch->text().isEmpty()) {
-        applyGridSearch(m_gridSearch->text());
+    if (m_imagesOnly->isChecked() || !m_gridSearch->text().isEmpty()) {
+        applyGridFilters();
     }
     stopPlayback();
     showGrid();
@@ -3205,16 +3226,18 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_thumbnailScheduleTimer.start(250);
 }
 
-void MainWindow::applyGridSearch(const QString &text)
+void MainWindow::applyGridFilters()
 {
-    const QString query = text.trimmed();
-    m_gridSearchMatches = 0;
+    const QString query = m_gridSearch->text().trimmed();
+    const bool imagesOnly = m_imagesOnly->isChecked();
+    m_visibleGridItems = 0;
     QItemSelection hiddenSelection;
     for (int row = 0; row < m_fileGrid->count(); ++row) {
         QListWidgetItem *item = m_fileGrid->item(row);
-        const bool hidden = !item->text().contains(query, Qt::CaseInsensitive);
+        const bool hidden = !item->text().contains(query, Qt::CaseInsensitive)
+            || (imagesOnly && !item->data(IsFolderRole).toBool() && !item->data(IsImageRole).toBool());
         if (!hidden) {
-            ++m_gridSearchMatches;
+            ++m_visibleGridItems;
         }
         if (item->isHidden() != hidden) {
             item->setHidden(hidden);
