@@ -14,6 +14,7 @@ on:
     paths:
       - .github/workflows/release-installer.yml
       - installer/**
+      - resources/luts/**
 
 permissions:
   contents: write
@@ -105,7 +106,6 @@ jobs:
         run: >
           ./installer/build-installer.ps1
           -QtDir "$env:QT_ROOT_DIR"
-          -ArriLutDir ""
           -Version "${{ steps.version.outputs.version }}"
 
       - name: Keep the installer as a workflow artifact
