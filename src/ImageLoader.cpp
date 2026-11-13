@@ -1,5 +1,6 @@
 #include "ImageLoader.h"
 
+#include "DngReader.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "HeifReader.h"
@@ -15,6 +16,12 @@ bool ImageLoader::Result::isValid() const
 
 ImageLoader::Result QtImageLoader::load(const QString &filePath) const
 {
+    if (Dng::isDngFile(filePath)) {
+        QString error;
+        QImage image = Dng::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
     if (Dpx::isDpxFile(filePath)) {
         QString error;
         QImage image = Dpx::read(filePath, &error);

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-# Use vcpkg for OpenEXR when it's available and no toolchain was chosen: VCPKG_ROOT if set,
+# Use vcpkg for image format dependencies when available and no toolchain was chosen: VCPKG_ROOT if set,
 # otherwise the copy that ships with Visual Studio (VSINSTALLDIR is set by the developer prompt).
 # This must come before project(). A build folder configured without it has to be recreated.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -16,7 +16,7 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
 endif()
 
 # vcpkg triplet (triplets/x64-windows-onion.cmake): the same /MD runtime as Qt, OpenEXR linked
-# statically, and the LGPL libraries libheif and libde265 as DLLs next to the .exe.
+# statically, and the LGPL libraries libheif, libde265 and LibRaw as DLLs next to the .exe.
 # Build folders configured before HEIF support used x64-windows-static-md; they are switched over.
 if(CMAKE_HOST_WIN32)
     set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE STRING "vcpkg overlay triplets")
@@ -56,6 +56,8 @@ qt_add_executable(OnionImageViewer
     src/ExrReader.cpp
     src/HeifReader.h
     src/HeifReader.cpp
+    src/DngReader.h
+    src/DngReader.cpp
     src/Exif.h
     src/Exif.cpp
     src/PsdReader.h
@@ -158,25 +160,43 @@ if(libheif_FOUND AND TARGET heif)
     message(STATUS "libheif ${libheif_VERSION} found: HEIF/HEIC support enabled")
     target_link_libraries(OnionImageViewer PRIVATE heif)
     target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_LIBHEIF)
-    if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
-        set(ONION_VCPKG_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
-        file(GLOB ONION_VCPKG_DLLS "${ONION_VCPKG_PREFIX}/bin/*.dll")
-        if(ONION_VCPKG_DLLS)
-            add_custom_command(TARGET OnionImageViewer POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONION_VCPKG_DLLS} "$<TARGET_FILE_DIR:OnionImageViewer>"
-                VERBATIM)
-        endif()
-        foreach(ONION_LGPL_LIB libheif libde265)
-            if(EXISTS "${ONION_VCPKG_PREFIX}/share/${ONION_LGPL_LIB}/copyright")
-                configure_file("${ONION_VCPKG_PREFIX}/share/${ONION_LGPL_LIB}/copyright"
-                    "${CMAKE_CURRENT_BINARY_DIR}/licenses/${ONION_LGPL_LIB}.txt" COPYONLY)
-            endif()
-        endforeach()
-        configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt"
-            "${CMAKE_CURRENT_BINARY_DIR}/licenses/THIRD-PARTY-NOTICES.txt" COPYONLY)
-    endif()
 else()
     message(STATUS "libheif not found: building without HEIF/HEIC support")
+endif()
+
+# LibRaw's reentrant library can decode on multiple viewer and thumbnail workers.
+find_package(libraw CONFIG QUIET)
+if(TARGET libraw::raw_r)
+    message(STATUS "LibRaw found: DNG support enabled")
+    target_link_libraries(OnionImageViewer PRIVATE libraw::raw_r)
+    target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_LIBRAW)
+else()
+    message(STATUS "LibRaw not found: building without DNG support")
+endif()
+
+if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+    set(ONION_VCPKG_PREFIX "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    if(libheif_FOUND AND TARGET heif)
+        file(GLOB ONION_HEIF_DLLS "${ONION_VCPKG_PREFIX}/bin/heif.dll" "${ONION_VCPKG_PREFIX}/bin/libde265.dll")
+        if(ONION_HEIF_DLLS)
+            add_custom_command(TARGET OnionImageViewer POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONION_HEIF_DLLS} "$<TARGET_FILE_DIR:OnionImageViewer>"
+                VERBATIM)
+        endif()
+    endif()
+    if(TARGET libraw::raw_r)
+        add_custom_command(TARGET OnionImageViewer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:libraw::raw_r>" "$<TARGET_FILE_DIR:OnionImageViewer>"
+            VERBATIM)
+    endif()
+    foreach(ONION_NOTICE_LIB libheif libde265 libraw jasper lcms libjpeg-turbo zlib)
+        if(EXISTS "${ONION_VCPKG_PREFIX}/share/${ONION_NOTICE_LIB}/copyright")
+            configure_file("${ONION_VCPKG_PREFIX}/share/${ONION_NOTICE_LIB}/copyright"
+                "${CMAKE_CURRENT_BINARY_DIR}/licenses/${ONION_NOTICE_LIB}.txt" COPYONLY)
+        endif()
+    endforeach()
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/THIRD-PARTY-NOTICES.txt"
+        "${CMAKE_CURRENT_BINARY_DIR}/licenses/THIRD-PARTY-NOTICES.txt" COPYONLY)
 endif()
 
 # PDF and Illustrator support is optional too: it needs the Qt PDF module (Qt Maintenance Tool:

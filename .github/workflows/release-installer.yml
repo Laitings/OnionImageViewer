@@ -104,7 +104,7 @@ jobs:
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
 
-      # OpenEXR (static), libheif and libde265 (DLLs, see triplets/).
+      # OpenEXR (static), libheif, libde265 and LibRaw (DLLs, see triplets/).
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
@@ -140,10 +140,10 @@ jobs:
           -QtDir "$env:QT_ROOT_DIR"
           -Version "${{ steps.version.outputs.version }}"
 
-      - name: Check that HEIC support is in the installer
+      - name: Check HEIC and DNG support in the installer
         shell: pwsh
         run: |
-          foreach ($file in "heif.dll", "libde265.dll", "licenses\libheif.txt", "licenses\libde265.txt") {
+          foreach ($file in "heif.dll", "libde265.dll", "raw_r.dll", "licenses\libheif.txt", "licenses\libde265.txt", "licenses\libraw.txt", "licenses\libjpeg-turbo.txt", "licenses\lcms.txt", "licenses\zlib.txt") {
             if (-not (Test-Path "installer\stage\$file")) { throw "$file is missing from installer\stage" }
           }
           Get-ChildItem installer\stage -Filter *.dll | ForEach-Object { Write-Host "  $($_.Name)" }
