@@ -37,6 +37,43 @@ int compareFrames(const QString &a, const QString &b)
     return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
 }
 
+// The name with every run of digits replaced by '#', with the folder, compared without case:
+// files that differ only in their numbers share it.
+QString looseKey(const QString &path)
+{
+    const QFileInfo info(path);
+    const QString name = info.fileName();
+    QString pattern;
+    pattern.reserve(name.size());
+    for (qsizetype i = 0; i < name.size(); ++i) {
+        if (isDigit(name.at(i))) {
+            if (i == 0 || !isDigit(name.at(i - 1))) {
+                pattern += QLatin1Char('#');
+            }
+        } else {
+            pattern += name.at(i);
+        }
+    }
+    return (info.path() + QLatin1Char('/') + pattern).toCaseFolded();
+}
+
+// Collects the files of paths with the given key, as indices; index is always included.
+QVector<int> collect(const QStringList &paths, int index, const QString &suffix, const QString &wanted,
+                     QString (*keyOf)(const QString &))
+{
+    QVector<int> frames;
+    for (int i = 0; i < paths.size(); ++i) {
+        // Cheap test first: the sequence's files all share the extension.
+        if (i != index && !paths.at(i).endsWith(suffix, Qt::CaseInsensitive)) {
+            continue;
+        }
+        if (i == index || keyOf(paths.at(i)) == wanted) {
+            frames.append(i);
+        }
+    }
+    return frames;
+}
+
 } // namespace
 
 Name split(const QString &fileName)
@@ -64,28 +101,25 @@ QString key(const QString &path)
 
 QVector<int> framesOf(const QStringList &paths, int index)
 {
-    QVector<int> frames;
     if (index < 0 || index >= paths.size()) {
-        return frames;
+        return {};
     }
     const QString wanted = key(paths.at(index));
     if (wanted.isEmpty()) {
-        return frames;
+        return {};
     }
-    // Cheap test first: the sequence's files all share the extension.
     const QString suffix = split(QFileInfo(paths.at(index)).fileName()).suffix;
-    QVector<QString> numbers; // frame number of each entry in frames
-    for (int i = 0; i < paths.size(); ++i) {
-        if (i != index && !paths.at(i).endsWith(suffix, Qt::CaseInsensitive)) {
-            continue;
-        }
-        if (i == index || key(paths.at(i)) == wanted) {
-            frames.append(i);
-        }
+    QVector<int> frames = collect(paths, index, suffix, wanted, &key);
+    if (frames.size() < 2) {
+        // Names where another number changes along with the frame number, such as
+        // "Door_v0010001_00001.png", "Door_v0010002_00002.png": group files that differ only in
+        // their numbers, still ordered by the last one.
+        frames = collect(paths, index, suffix, looseKey(paths.at(index)), &looseKey);
     }
     if (frames.size() < 2) {
         return {};
     }
+    QVector<QString> numbers; // frame number of each entry in frames
     numbers.reserve(frames.size());
     for (const int i : frames) {
         numbers.append(split(QFileInfo(paths.at(i)).fileName()).frame);
@@ -96,7 +130,7 @@ QVector<int> framesOf(const QStringList &paths, int index)
     }
     std::stable_sort(order.begin(), order.end(), [&numbers](int a, int b) {
         return compareFrames(numbers.at(a), numbers.at(b)) < 0;
-    });
+    }); // equal frame numbers keep their (name) order
     QVector<int> sorted;
     sorted.reserve(frames.size());
     for (const int i : order) {
@@ -112,7 +146,28 @@ QString displayName(const QStringList &paths, const QVector<int> &frames)
     }
     const Name first = split(QFileInfo(paths.at(frames.first())).fileName());
     const Name last = split(QFileInfo(paths.at(frames.last())).fileName());
-    return QStringLiteral("%1[%2-%3]%4").arg(first.prefix, first.frame, last.frame, first.suffix);
+    QString prefix = first.prefix;
+    if (first.prefix.compare(last.prefix, Qt::CaseInsensitive) != 0) {
+        // Other numbers change too: show them as '#' ("Door_v#_[00001-00055].png").
+        qsizetype start = 0;
+        while (start < first.prefix.size() && start < last.prefix.size()
+               && first.prefix.at(start) == last.prefix.at(start)) {
+            ++start;
+        }
+        while (start > 0 && isDigit(first.prefix.at(start - 1))) {
+            --start;
+        }
+        qsizetype end = 0;
+        while (end < first.prefix.size() - start && end < last.prefix.size() - start
+               && first.prefix.at(first.prefix.size() - 1 - end) == last.prefix.at(last.prefix.size() - 1 - end)) {
+            ++end;
+        }
+        while (end > 0 && isDigit(first.prefix.at(first.prefix.size() - end))) {
+            --end;
+        }
+        prefix = first.prefix.left(start) + QLatin1Char('#') + first.prefix.right(end);
+    }
+    return QStringLiteral("%1[%2-%3]%4").arg(prefix, first.frame, last.frame, first.suffix);
 }
 
 } // namespace Sequence
