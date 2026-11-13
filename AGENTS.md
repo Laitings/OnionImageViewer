@@ -13,14 +13,15 @@ Delegate independent coding tasks to subagents when running them in parallel wou
   still compiles with GCC/Clang on Linux, which is handy for headless checks
   (`QT_QPA_PLATFORM=offscreen`).
 - Optional features are compile-time switches set by CMake: `ONION_HAVE_OPENEXR` (OpenEXR found),
-  `ONION_HAVE_LIBHEIF` (libheif found), `ONION_HAVE_LIBRAW` (LibRaw found) and
+  `ONION_HAVE_LIBHEIF` (libheif found), `ONION_HAVE_LIBRAW` (LibRaw found), `ONION_HAVE_LIBWEBP` (libwebp found) and
   `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must
   build with and without them.
 - vcpkg uses the overlay triplet `triplets/x64-windows-onion.cmake`: everything static with the /MD
   runtime, except libheif, libde265 and LibRaw, which must stay DLLs. CMake copies the DLLs
   next to the .exe and their licences to `licenses/`. The installer ships them together.
   Never enable libheif's `hevc` or `x264` features: they pull in GPL encoders.
-  Add any other LGPL library to the triplet's dynamic list in the same way.
+  Add any other LGPL library to the triplet's dynamic list in the same way. libwebp is BSD and
+  stays static.
 - New source files must be added to the `qt_add_executable` list in `CMakeLists.txt`.
 - The version is `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`, unless
   `-DONION_VERSION` overrides it (the release workflow passes the GitHub release tag). It reaches
@@ -31,7 +32,8 @@ Delegate independent coding tasks to subagents when running them in parallel wou
 
 ## Building
 
-On Windows, `build-run.bat` from the repository folder does everything (see README). By hand, use
+On Windows, `build-run.bat` from the repository folder does everything (see README). It warns when the
+Qt it picked lacks the Qt Image Formats add-on (no `qtiff.dll`), which TIFF and TGA need. By hand, use
 the "x64 Native Tools Command Prompt" and:
 
 ```bat

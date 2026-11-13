@@ -7,7 +7,8 @@ the full file metadata, and export what you see with the view burned in.
 ## Features
 
 - **Formats**
-  - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, WebP, TGA and more.
+  - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, TGA and more.
+  - **WebP** `.webp`: through libwebp from vcpkg (linked statically), so it works without the Qt Image Formats add-on. Lossy, lossless and alpha; animated WebP plays like a GIF; embedded ICC profiles are converted to sRGB; Exif shows in the metadata panel. Optional at build time (without libwebp, Qt's WebP plugin is used if installed).
   - **DPX**: own reader (`src/DpxReader.*`). RGB, RGBA, ABGR and luma, 8/10/12/16 bit, filled or packed, either endianness.
   - **OpenEXR**: through the OpenEXR library from vcpkg. Optional at build time.
   - **Digital Negative** `.dng`: LibRaw develops the raw image at full resolution in sRGB. Folder thumbnails use the embedded preview when available, or a reduced raw render. Optional at build time.
@@ -20,7 +21,7 @@ the full file metadata, and export what you see with the view burned in.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
 - **Split viewer** (V, or View → Split Viewer): splits the viewer into two panes, side by side or top and bottom. The second pane has its own file grid with a path bar and an Up button, so you can pick any image from any folder to show next to the main one. Click a pane or press Tab to make it active (it gets a blue frame); the arrow keys, Home/End, F and 1 act on the active pane, and Esc in the second pane goes back to its grid. Sync Zoom and Pan (on by default) zooms and pans both panes together; images of different sizes are shown at the same width so the same part of the frame lines up. The color view, channels and clipping overlay apply to both panes, and the status bar shows the active pane's image. The metadata panel, the scopes, Copy Path and Show in Explorer follow the active pane (in the second pane's grid, the file under the cursor).
 - **Scopes** (S in the viewer, Ctrl+Shift+H anywhere): a histogram (RGB or luma) and a waveform (luma, RGB parade or RGB overlay) of the viewed image in a dockable panel, with the hovered pixel marked on both. By default they read the picture as displayed, with the color view or LUT applied, matching the pixel readout's display values (0–100 scale). **Stored values** reads the file's own values instead: scene-linear float images (EXR, ACES) get a scale in stops with 18% grey marked, other float images extend above 1 when they go there. Computed on a background thread from a downsampled image, and only while the panel is open.
-- **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
+- **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF and WebP details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
 - **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Keep the original size or set an output width and height and choose center crop, scale with crop, fit with black padding, or stretch. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
 - **Batch Rename** (F2): select files or folders in the grid and choose File → Batch Rename or Rename… / Batch Rename… in the right-click menu. Build the new name from a pattern with tokens: `{name}` (old name), `{n}` (counter with start, step and digits; `{n:4}` sets the digits), `{date}` (Exif date taken from JPEG, TIFF/DNG and HEIC, else the file date; `{date:yyyyMMdd_HHmmss}` sets the format), `{modified}` (file date), `{frame}`, `{folder}` and `{ext}`. Then find and replace (plain text or a regular expression with `\1` groups) and change the case of the name and the extension. The extension itself is always kept. Image sequences keep their frame numbers: `A001_C002.1001.dpx` becomes `Shot_010.1001.dpx`, and a whole sequence takes one counter value. A live preview shows every old → new name and marks names that can't be used (already taken, the same for two files, characters or names Windows doesn't allow), and Rename stays off until there are none. Swaps and case-only changes work. If one rename fails, the whole batch is put back. Edit → Undo Rename (Ctrl+Z) restores the names of the last batch; press it again to step back through earlier batches.
@@ -37,15 +38,16 @@ Turn on **Images only** to hide unsupported files while keeping folders availabl
 | What | Version | Notes |
 | --- | --- | --- |
 | Visual Studio | 2026 (2022 works too) | "Desktop development with C++" workload. Its bundled vcpkg is used for OpenEXR. |
-| Qt | 6.11 `msvc2022_64` | Installed under `C:\Qt\6.11.x\msvc2022_64`. Qt Network comes with the base package and powers update checks. Add **Qt Image Formats** (TIFF, WebP, TGA) and **Qt PDF** (PDF/AI) in the Qt Maintenance Tool. |
+| Qt | 6.11 `msvc2022_64` | Installed under `C:\Qt\6.11.x\msvc2022_64`. Qt Network comes with the base package and powers update checks. Add **Qt Image Formats** (TIFF, TGA; also needed to *write* WebP in Batch Convert) and **Qt PDF** (PDF/AI) in the Qt Maintenance Tool. |
 | CMake + Ninja | 3.21+ | Both come with Visual Studio. |
 | OpenEXR | from vcpkg | Declared in `vcpkg.json` (pinned baseline, triplet `x64-windows-onion` from `triplets/`, linked statically). Fetched on the first configure. |
 | LibRaw | from vcpkg | DNG decoding with the `dng-lossy` feature. Ships as `raw_r.dll` with its license in `licenses/`. |
 | libheif + libde265 | from vcpkg | Declared in `vcpkg.json` without libheif's default features (its `hevc` feature is the GPL x265 encoder). Built as DLLs (LGPL) by the `triplets/` triplet and copied next to the .exe with their licences in `licenses/`. |
+| libwebp | from vcpkg | WebP decoding and animation (BSD licence, linked statically). |
 | Ghostscript | optional, at run time | For EPS files. Found as `gswin64c` on the PATH or under `C:\Program Files\gs`. |
 | Inno Setup 6 | optional | Only for building the installer: `winget install JRSoftware.InnoSetup`. |
 
-Without OpenEXR, LibRaw, libheif or Qt PDF the app still builds; it just can't open those formats (CMake
+Without OpenEXR, LibRaw, libheif, libwebp or Qt PDF the app still builds; it just can't open those formats (CMake
 says so when it configures). The first configure after HEIF support was added builds libheif and
 rebuilds OpenEXR for the new triplet, which takes a few minutes; `build-run.bat` reconfigures an
 older `build-msvc` folder by itself.
@@ -107,7 +109,7 @@ Run workflow; that gives a test installer as a download on the run, with no rele
 
 ```
 CMakeLists.txt            build; optional image format libraries; ARRI LUT copy
-vcpkg.json                vcpkg manifest (OpenEXR, libheif, LibRaw)
+vcpkg.json                vcpkg manifest (OpenEXR, libheif, LibRaw, libwebp)
 triplets/                 vcpkg triplet: static libraries, but libheif/libde265 and LibRaw as DLLs (LGPL)
 build-run.bat             build + deploy + run (calls tools/build-run.ps1)
 installer/                Inno Setup script and the scripts that build the installer
@@ -126,11 +128,12 @@ src/
   SplitPane.*             second pane of the split viewer: its own file grid, viewport and frame loader
   OverlayButton.*         fading round buttons over the image (close, previous, next)
   Icons.*                 vector line icons for toolbar and menus
-  FrameLoader.*           background loading, frame cache and read-ahead for sequences
-  ImageLoader.*           picks the reader by file type (DPX, EXR, HEIF, DNG, PSD, vector, else QImageReader)
+  FrameLoader.*           background loading, frame cache and read-ahead for sequences; GIF/WebP playback
+  ImageLoader.*           picks the reader by file type (DPX, EXR, HEIF, WebP, DNG, PSD, vector, else QImageReader)
   DpxReader.*             DPX reader
   ExrReader.*             EXR reader (needs ONION_HAVE_OPENEXR)
   HeifReader.*            HEIF/HEIC reader (needs ONION_HAVE_LIBHEIF)
+  WebpReader.*            WebP reader and animated WebP playback (needs ONION_HAVE_LIBWEBP)
   DngReader.*             DNG raw development and embedded previews (needs ONION_HAVE_LIBRAW)
   Exif.*                  Exif parser for the metadata panel and the renamer's date taken
   PsdReader.*             PSD/PSB reader

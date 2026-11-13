@@ -6,6 +6,7 @@
 #include "HeifReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
+#include "WebpReader.h"
 
 #include <QImageReader>
 
@@ -37,6 +38,12 @@ ImageLoader::Result QtImageLoader::load(const QString &filePath) const
     if (Heif::isHeifFile(filePath)) {
         QString error;
         QImage image = Heif::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
+    if (Webp::isWebpFile(filePath)) {
+        QString error;
+        QImage image = Webp::read(filePath, &error);
         return {image, image.isNull() ? error : QString()};
     }
 

@@ -32,6 +32,13 @@ if (-not $QtDir -or -not (Test-Path (Join-Path $QtDir "bin\windeployqt.exe"))) {
     Fail "Qt not found. Pass -QtDir, e.g. -QtDir C:\Qt\6.11.1\msvc2022_64"
 }
 
+# TIFF, TGA and Qt's other extra image plugins come from the Qt Image Formats add-on.
+if (-not (Test-Path (Join-Path $QtDir "plugins\imageformats\qtiff.dll"))) {
+    Write-Host ""
+    Write-Host "WARNING: Qt Image Formats isn't installed in $QtDir, so TIFF and TGA files won't open or get thumbnails." -ForegroundColor Yellow
+    Write-Host "         Add it with the Qt Maintenance Tool (Qt > $(Split-Path -Leaf (Split-Path -Parent $QtDir)) > Additional Libraries > Qt Image Formats), then run this again." -ForegroundColor Yellow
+}
+
 # --- Visual Studio x64 environment --------------------------------------------------------------
 if (-not $env:VCToolsInstallDir) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"

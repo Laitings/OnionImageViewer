@@ -4,6 +4,7 @@
   "builtin-baseline": "177e8175121536d414f405ed8b3099b325a42638",
   "dependencies": [
     "openexr",
+    "libwebp",
     {
       "name": "libraw",
       "features": ["dng-lossy"]

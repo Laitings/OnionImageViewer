@@ -7,6 +7,7 @@
 #include "DngReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
+#include "WebpReader.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -617,6 +618,24 @@ void addHeifEntries(QList<Entry> &entries, const QString &filePath)
     }
 }
 
+void addWebpEntries(QList<Entry> &entries, const QString &filePath)
+{
+    const QString group = QStringLiteral("WebP");
+    QString error;
+    const QList<QPair<QString, QString>> facts = Webp::describe(filePath, &error);
+    if (facts.isEmpty()) {
+        entries.append({group, QStringLiteral("Error"), error});
+        return;
+    }
+    for (const auto &fact : facts) {
+        entries.append({group, fact.first, fact.second});
+    }
+    const QList<QPair<QString, QString>> exif = Exif::describe(Webp::exifData(filePath));
+    for (const auto &fact : exif) {
+        entries.append({QStringLiteral("Exif"), fact.first, fact.second});
+    }
+}
+
 void addQtEntries(QList<Entry> &entries, const QString &filePath)
 {
     QImageReader reader(filePath);
@@ -669,6 +688,8 @@ QList<Entry> read(const QString &filePath)
         }
     } else if (Heif::isHeifFile(filePath)) {
         addHeifEntries(entries, filePath);
+    } else if (Webp::isWebpFile(filePath)) {
+        addWebpEntries(entries, filePath);
     } else if (Exr::isExrFile(filePath)) {
 #ifdef ONION_HAVE_OPENEXR
         addExrEntries(entries, filePath);

@@ -49,7 +49,10 @@ public:
     bool isCached(const QString &path) const;
     void clear();
 
-    // Play the displayed GIF independently of folder sequence playback.
+    // True for file types that can hold an animation (GIF, WebP); startGif checks the file itself.
+    static bool mayBeAnimated(const QString &path);
+    // Play the displayed GIF or animated WebP independently of folder sequence playback. Still
+    // images are left alone.
     void startGif(const QString &path);
     void stopGif();
 
