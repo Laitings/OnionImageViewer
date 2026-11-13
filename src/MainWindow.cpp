@@ -4,6 +4,7 @@
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "PsdReader.h"
+#include "VectorReader.h"
 #include "FileItemDelegate.h"
 #include "FileOps.h"
 #include "FolderTreePanel.h"
@@ -219,6 +220,9 @@ QStringList supportedImageSuffixes()
     suffixes.append(QStringLiteral("dpx"));
     suffixes.append(QStringLiteral("psd"));
     suffixes.append(QStringLiteral("psb"));
+    for (const char *vector : {"ai", "eps", "epsf", "epsi", "pdf"}) {
+        suffixes.append(QString::fromLatin1(vector));
+    }
     if (Exr::isAvailable()) {
         suffixes.append(QStringLiteral("exr"));
     }
@@ -401,6 +405,10 @@ QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View vie
 
     if (Psd::isPsdFile(filePath)) {
         return displayThumbnail(Psd::read(filePath, nullptr, size), view, input, size);
+    }
+
+    if (Vector::isVectorFile(filePath)) {
+        return displayThumbnail(Vector::read(filePath, nullptr, size), view, input, size);
     }
 
     QImageReader reader(filePath);
@@ -1272,7 +1280,7 @@ void MainWindow::openImage()
         this,
         QStringLiteral("Open Image"),
         QString(),
-        QStringLiteral("Images (*.bmp *.dpx *.exr *.gif *.jpg *.jpeg *.png *.pbm *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
+        QStringLiteral("Images (*.ai *.bmp *.dpx *.eps *.epsf *.epsi *.exr *.gif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
 
     if (filePath.isEmpty()) {
         return;
