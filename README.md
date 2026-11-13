@@ -22,6 +22,7 @@ the full file metadata, and export what you see with the view burned in.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
 - **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Keep the original size or set an output width and height and choose center crop, scale with crop, fit with black padding, or stretch. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
+- **Batch Rename** (F2): select files or folders in the grid and choose File → Batch Rename or Rename… / Batch Rename… in the right-click menu. Build the new name from a pattern with tokens: `{name}` (old name), `{n}` (counter with start, step and digits; `{n:4}` sets the digits), `{date}` (Exif date taken from JPEG, TIFF/DNG and HEIC, else the file date; `{date:yyyyMMdd_HHmmss}` sets the format), `{modified}` (file date), `{frame}`, `{folder}` and `{ext}`. Then find and replace (plain text or a regular expression with `\1` groups) and change the case of the name and the extension. The extension itself is always kept. Image sequences keep their frame numbers: `A001_C002.1001.dpx` becomes `Shot_010.1001.dpx`, and a whole sequence takes one counter value. A live preview shows every old → new name and marks names that can't be used (already taken, the same for two files, characters or names Windows doesn't allow), and Rename stays off until there are none. Swaps and case-only changes work. If one rename fails, the whole batch is put back. Edit → Undo Rename (Ctrl+Z) restores the names of the last batch; press it again to step back through earlier batches.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
@@ -118,6 +119,8 @@ src/
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
   FileItemDelegate.*      drawing of the Details and Tiles views
   FileOps.*               copy / cut / paste via the system clipboard, background file jobs
+  BatchRename.*           batch renamer engine: pattern tokens, sequences, conflict checks, safe renames
+  BatchRenameDialog.*     Batch Rename dialog with the live old → new preview
   ImageViewport.*         image display: zoom, pan, channels, clipping overlay
   OverlayButton.*         fading round buttons over the image (close, previous, next)
   Icons.*                 vector line icons for toolbar and menus
@@ -127,7 +130,7 @@ src/
   ExrReader.*             EXR reader (needs ONION_HAVE_OPENEXR)
   HeifReader.*            HEIF/HEIC reader (needs ONION_HAVE_LIBHEIF)
   DngReader.*             DNG raw development and embedded previews (needs ONION_HAVE_LIBRAW)
-  Exif.*                  Exif parser for the metadata panel
+  Exif.*                  Exif parser for the metadata panel and the renamer's date taken
   PsdReader.*             PSD/PSB reader
   VectorReader.*          PDF / AI (Qt PDF) and EPS (Ghostscript) rendering
   ColorTransform.*        display transforms: LogC3/LogC4 → Rec.709, .cube LUTs, ACES input

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "BatchRenameDialog.h"
 
 #include "ColorTransform.h"
 #include "DngReader.h"
@@ -264,6 +265,16 @@ const QString SettingsGridView = QStringLiteral("grid/view");
 const QString SettingsImagesOnly = QStringLiteral("grid/imagesOnly");
 const QString SettingsDetailsColumns = QStringLiteral("grid/detailsColumns");
 const QString SettingsExportFormat = QStringLiteral("export/format");
+const QString SettingsRenamePattern = QStringLiteral("rename/pattern");
+const QString SettingsRenameFind = QStringLiteral("rename/find");
+const QString SettingsRenameReplace = QStringLiteral("rename/replace");
+const QString SettingsRenameRegex = QStringLiteral("rename/regex");
+const QString SettingsRenameMatchCase = QStringLiteral("rename/matchCase");
+const QString SettingsRenameNameCase = QStringLiteral("rename/nameCase");
+const QString SettingsRenameExtensionCase = QStringLiteral("rename/extensionCase");
+const QString SettingsRenameCounterStart = QStringLiteral("rename/counterStart");
+const QString SettingsRenameCounterStep = QStringLiteral("rename/counterStep");
+const QString SettingsRenameCounterDigits = QStringLiteral("rename/counterDigits");
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
@@ -959,6 +970,26 @@ void MainWindow::createActions()
     connect(m_batchConvertAction, &QAction::triggered, this, [this]() {
         batchConvert(selectedPaths());
     });
+    m_batchRenameAction = new QAction(QStringLiteral("Batch Rename…"), this);
+    m_batchRenameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    m_batchRenameAction->setToolTip(QStringLiteral("Rename the selected files with a pattern, counter, date, find and replace"));
+    connect(m_batchRenameAction, &QAction::triggered, this, [this]() {
+        batchRename(selectedPaths());
+    });
+    m_undoRenameAction = new QAction(QStringLiteral("Undo Rename"), this);
+    m_undoRenameAction->setShortcut(QKeySequence::Undo);
+    m_undoRenameAction->setEnabled(false);
+    connect(m_undoRenameAction, &QAction::triggered, this, [this]() {
+        if (m_renameHistory.isEmpty() || m_batchRunning || isViewerVisible()) {
+            return;
+        }
+        QList<BatchRename::Move> back;
+        const QList<BatchRename::Move> last = m_renameHistory.constLast();
+        for (const BatchRename::Move &move : last) {
+            back.append({move.to, move.from});
+        }
+        runRename(back, true);
+    });
 
     m_copyImageAction = new QAction(QStringLiteral("Copy Image"), this);
     m_copyImageAction->setShortcut(QKeySequence::Copy);
@@ -1076,6 +1107,7 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     fileMenu->addAction(m_exportAction);
     fileMenu->addAction(m_batchConvertAction);
+    fileMenu->addAction(m_batchRenameAction);
     fileMenu->addSeparator();
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
@@ -1084,6 +1116,8 @@ void MainWindow::createMenus()
     fileMenu->addAction(QStringLiteral("Exit"), this, &QWidget::close);
 
     QMenu *editMenu = menuBar()->addMenu(QStringLiteral("Edit"));
+    editMenu->addAction(m_undoRenameAction);
+    editMenu->addSeparator();
     editMenu->addAction(m_cutAction);
     editMenu->addAction(m_copyImageAction);
     editMenu->addAction(m_pasteAction);
@@ -1145,7 +1179,8 @@ void MainWindow::createMenus()
             "  Click, Ctrl+click, Shift+click, or drag a box around files to select them\n"
             "  Shift+arrows extend the selection,  Ctrl+arrows move without selecting,\n"
             "  Ctrl+Space selects or unselects,  Ctrl+A selects all\n"
-            "  Ctrl+C / Ctrl+X / Ctrl+V  copy / cut / paste files (also to and from Explorer)\n\n"
+            "  Ctrl+C / Ctrl+X / Ctrl+V  copy / cut / paste files (also to and from Explorer)\n"
+            "  F2  rename the selected files (Batch Rename),  Ctrl+Z  undo the last rename\n\n"
             "Anywhere:\n"
             "  Alt+D or F4  type or paste a path\n"
             "  F11  full screen\n"
@@ -2526,6 +2561,131 @@ void MainWindow::batchConvert(const QStringList &paths)
     });
 }
 
+void MainWindow::batchRename(const QStringList &paths)
+{
+    if (m_batchRunning || m_fileJob || isViewerVisible()) {
+        return;
+    }
+    if (paths.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Select files in the file grid to rename."), 4000);
+        return;
+    }
+    QSettings settings;
+    BatchRename::Options options;
+    options.pattern = settings.value(SettingsRenamePattern, options.pattern).toString();
+    options.find = settings.value(SettingsRenameFind).toString();
+    options.replace = settings.value(SettingsRenameReplace).toString();
+    options.regex = settings.value(SettingsRenameRegex, false).toBool();
+    options.matchCase = settings.value(SettingsRenameMatchCase, false).toBool();
+    options.nameCase = static_cast<BatchRename::CaseChange>(settings.value(SettingsRenameNameCase, 0).toInt());
+    options.extensionCase = static_cast<BatchRename::CaseChange>(settings.value(SettingsRenameExtensionCase, 0).toInt());
+    options.counterStart = settings.value(SettingsRenameCounterStart, options.counterStart).toInt();
+    options.counterStep = settings.value(SettingsRenameCounterStep, options.counterStep).toInt();
+    options.counterPadding = settings.value(SettingsRenameCounterDigits, options.counterPadding).toInt();
+
+    BatchRenameDialog dialog(paths, options, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    options = dialog.options();
+    settings.setValue(SettingsRenamePattern, options.pattern);
+    settings.setValue(SettingsRenameFind, options.find);
+    settings.setValue(SettingsRenameReplace, options.replace);
+    settings.setValue(SettingsRenameRegex, options.regex);
+    settings.setValue(SettingsRenameMatchCase, options.matchCase);
+    settings.setValue(SettingsRenameNameCase, int(options.nameCase));
+    settings.setValue(SettingsRenameExtensionCase, int(options.extensionCase));
+    settings.setValue(SettingsRenameCounterStart, options.counterStart);
+    settings.setValue(SettingsRenameCounterStep, options.counterStep);
+    settings.setValue(SettingsRenameCounterDigits, options.counterPadding);
+    const QList<BatchRename::Move> moves = dialog.moves();
+    if (!moves.isEmpty()) {
+        runRename(moves, false);
+    }
+}
+
+// Renames on a background thread (thousands of frames on a network share take a while), then
+// refreshes the grid with the renamed files selected. A failed batch is rolled back as a whole.
+void MainWindow::runRename(const QList<BatchRename::Move> &moves, bool undo)
+{
+    const QString title = undo ? QStringLiteral("Undo Rename") : QStringLiteral("Batch Rename");
+    auto *progress = new QProgressDialog(undo ? QStringLiteral("Putting the old names back…") : QStringLiteral("Renaming…"),
+                                         QString(), 0, 0, this);
+    progress->setWindowTitle(title);
+    progress->setCancelButton(nullptr);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setMinimumDuration(400);
+    progress->setValue(0);
+    m_batchRunning = true;
+    updateEditActions();
+    QPointer<QProgressDialog> guard(progress);
+    m_batchPool.start([this, moves, undo, title, guard]() {
+        const BatchRename::Outcome outcome = BatchRename::apply(moves, [guard](int done, int total) {
+            QMetaObject::invokeMethod(qApp, [guard, done, total]() {
+                if (guard) {
+                    guard->setMaximum(total);
+                    guard->setValue(done);
+                }
+            }, Qt::QueuedConnection);
+        });
+        QMetaObject::invokeMethod(this, [this, outcome, undo, title, guard]() {
+            if (guard) {
+                guard->deleteLater();
+            }
+            m_batchRunning = false;
+            if (!outcome.done.isEmpty()) {
+                if (undo) {
+                    m_renameHistory.removeLast();
+                } else {
+                    m_renameHistory.append(outcome.done);
+                }
+            }
+            QSet<QString> renamed;
+            for (const BatchRename::Move &move : outcome.done) {
+                renamed.insert(QDir::cleanPath(move.to).toLower());
+            }
+            if (!isViewerVisible() && !m_currentFolderPath.isEmpty()) {
+                const int scroll = m_fileGrid->verticalScrollBar()->value();
+                populateFileGrid(m_currentFolderPath, false);
+                m_fileGrid->verticalScrollBar()->setValue(scroll);
+                QListWidgetItem *first = nullptr;
+                for (int row = 0; row < m_fileGrid->count() && !renamed.isEmpty(); ++row) {
+                    QListWidgetItem *item = m_fileGrid->item(row);
+                    if (item->isHidden() || !renamed.contains(QDir::cleanPath(item->data(FilePathRole).toString()).toLower())) {
+                        continue;
+                    }
+                    if (!first) {
+                        first = item;
+                        m_fileGrid->setCurrentItem(item, QItemSelectionModel::ClearAndSelect);
+                    } else {
+                        item->setSelected(true);
+                    }
+                }
+                if (first) {
+                    m_fileGrid->scrollToItem(first);
+                }
+            }
+            updateEditActions();
+            if (outcome.errors.isEmpty()) {
+                const int count = int(outcome.done.size());
+                statusBar()->showMessage(undo ? QStringLiteral("Put back the old names of %1 item(s)").arg(count)
+                                              : QStringLiteral("Renamed %1 item(s). Ctrl+Z undoes it.").arg(count),
+                                         6000);
+                return;
+            }
+            QStringList shown = outcome.errors.mid(0, 15);
+            if (outcome.errors.size() > shown.size()) {
+                shown.append(QStringLiteral("…and %1 more").arg(outcome.errors.size() - shown.size()));
+            }
+            QMessageBox::warning(this, title,
+                                 (outcome.rolledBack ? QStringLiteral("Nothing was renamed: the names were put back after this problem.\n\n")
+                                                     : QString())
+                                     + shown.join(QLatin1Char('\n')));
+        }, Qt::QueuedConnection);
+    });
+}
+
 void MainWindow::copyImageToClipboard()
 {
     if (!isViewerVisible()) {
@@ -2619,6 +2779,11 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
             });
             convert->setEnabled(!m_batchRunning);
         }
+        auto *rename = menu.addAction(paths.size() > 1 ? QStringLiteral("Batch Rename…") : QStringLiteral("Rename…"), this, [this, paths]() {
+            batchRename(paths);
+        });
+        rename->setShortcut(m_batchRenameAction->shortcut());
+        rename->setEnabled(!m_batchRunning && !m_fileJob);
         menu.addAction(m_cutAction);
         menu.addAction(m_copyFilesAction);
         if (item->data(IsFolderRole).toBool()) {
@@ -2800,6 +2965,8 @@ void MainWindow::updateEditActions()
         && std::any_of(selected.cbegin(), selected.cend(), [](const QListWidgetItem *item) {
             return !item->isHidden() && item->data(IsImageRole).toBool();
         }));
+    m_batchRenameAction->setEnabled(hasSelection && !m_batchRunning && !m_fileJob);
+    m_undoRenameAction->setEnabled(grid && !m_renameHistory.isEmpty() && !m_batchRunning && !m_fileJob);
     m_cutAction->setEnabled(hasSelection);
     m_copyFilesAction->setEnabled(hasSelection);
     m_pasteAction->setEnabled(grid && canPaste && !m_currentFolderPath.isEmpty() && !m_fileJob);
