@@ -88,6 +88,7 @@ qt_add_executable(OnionImageViewer
     src/OverlayButton.cpp
     src/PathBar.h
     src/PathBar.cpp
+    src/NameFilter.h
     src/SplitPane.h
     src/SplitPane.cpp
     src/Icons.h

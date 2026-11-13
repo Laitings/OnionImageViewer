@@ -152,6 +152,8 @@ private:
     ImageViewport *activeViewport() const;
     // With Sync Zoom and Pan on, makes the other pane show the same zoom and position as from.
     void syncSplitViews(ImageViewport *from);
+    // Side by side, the split pane's bar sits in the address bar row, lined up with the pane.
+    void layoutSplitHeader();
     void showViewerContextMenu(const QPoint &pos);
     void copyColorText(const QString &text, const QColor &color);
     void handlePathActivated(const QString &path);
@@ -257,6 +259,8 @@ private:
     QListWidget *m_fileGrid = nullptr;
     ImageViewport *m_imageViewport = nullptr;
     QSplitter *m_viewerSplitter = nullptr;
+    QWidget *m_navigationRow = nullptr;  // the address bar row: main navigation, then the split bar
+    QWidget *m_mainNavigation = nullptr; // Back, Up, path bar, search and Images only
     SplitPane *m_splitPane = nullptr;
     bool m_splitPaneActive = false;
     QAction *m_splitAction = nullptr;

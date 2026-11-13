@@ -19,6 +19,7 @@ class ImageLoader;
 class ImageViewport;
 class PathBar;
 class QKeyEvent;
+class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QStackedWidget;
@@ -45,6 +46,13 @@ public:
     ~SplitPane() override;
 
     ImageViewport *viewport() const { return m_viewport; }
+
+    // The pane's bar (Up, path, search, grid and close buttons). MainWindow moves it into the
+    // address bar row for side by side, so both bars sit on the same line; reclaimHeader() puts it
+    // back on top of the pane. setHeaderInline adjusts its margins to the row it sits in.
+    QWidget *header() const { return m_header; }
+    void reclaimHeader();
+    void setHeaderInline(bool inline_);
 
     // Lists a folder in the pane's grid and shows the grid. selectPath, if listed, is selected.
     void browse(const QString &folderPath, const QString &selectPath = QString());
@@ -94,12 +102,21 @@ private:
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail);
     void resetThumbnails();
     void updateHeader();
+    // Hides grid items whose names don't match the pane's search field (same rules as the main
+    // grid's search: plain text anywhere in the name, or wildcards like *.psd;*.tif).
+    void applySearch();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
 
     FrameLoader *m_frameLoader = nullptr;
     ThumbnailFunction m_thumbnails;
     ImageFilter m_isImage;
     QWidget *m_header = nullptr;
     PathBar *m_pathBar = nullptr;
+    QLineEdit *m_search = nullptr;
     QToolButton *m_upButton = nullptr;
     QToolButton *m_browseButton = nullptr;
     QToolButton *m_closeButton = nullptr;
