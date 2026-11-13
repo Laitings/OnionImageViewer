@@ -61,7 +61,7 @@ private:
     QRectF imageRect() const;
     void clampPan();
     void setZoomAroundPoint(double zoom, const QPointF &viewportPoint);
-    void drawCheckerboard(QPainter &painter, const QRect &rect);
+    void drawCheckerboard(QPainter &painter, const QRectF &rect);
     void invalidateScaledCache();
     void rebuildScaledCache();
     void drawMainImage(QPainter &painter, const QRectF &target, const QRectF &visibleTarget);
