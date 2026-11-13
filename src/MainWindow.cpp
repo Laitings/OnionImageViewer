@@ -511,6 +511,24 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
             return true;
         }
+        // Plain wheel in the icon and tile views: scroll a fixed distance per notch. Qt's own
+        // step there depends on the Qt version and can be a few pixels, which feels very slow
+        // with big thumbnails.
+        if (!wheel->modifiers() && wheel->angleDelta().y() != 0
+            && (m_gridView == GridView::Icons || m_gridView == GridView::Tiles)) {
+            const int rowHeight = m_fileGrid->gridSize().height() + (m_gridView == GridView::Icons ? m_fileGrid->spacing() : 0);
+            // About one row per notch with the default 3 lines, never less than 150 px.
+            const qreal notchPixels = qMax(rowHeight, 150) * QApplication::wheelScrollLines() / 3.0;
+            m_wheelRemainder -= wheel->angleDelta().y() / 120.0 * notchPixels;
+            const int pixels = int(m_wheelRemainder);
+            m_wheelRemainder -= pixels;
+            QScrollBar *bar = m_fileGrid->verticalScrollBar();
+            if (m_fileGrid->verticalScrollMode() != QAbstractItemView::ScrollPerPixel) {
+                m_fileGrid->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+            }
+            bar->setValue(bar->value() + pixels);
+            return true;
+        }
     }
     if (watched == m_imagePage && event->type() == QEvent::Resize) {
         layoutOverlayButtons();

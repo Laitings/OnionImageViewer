@@ -220,6 +220,7 @@ private:
     int m_thumbnailDisplaySize = 128;
     QSlider *m_thumbnailSizeSlider = nullptr;
     GridView m_gridView = GridView::Icons;
+    qreal m_wheelRemainder = 0.0; // part of a pixel left over from high-resolution wheels
     FileItemDelegate *m_fileDelegate = nullptr;
     QHeaderView *m_detailsHeader = nullptr;
     int m_currentImageIndex = -1;
