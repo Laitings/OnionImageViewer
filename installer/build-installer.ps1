@@ -101,6 +101,11 @@ Step "Collecting files in $stageDir"
 if (Test-Path $stageDir) { Remove-Item $stageDir -Recurse -Force }
 New-Item -ItemType Directory $stageDir | Out-Null
 Copy-Item $exe $stageDir
+# DLLs the build put next to the .exe: libheif and libde265 (LGPL, so not linked statically).
+Get-ChildItem $BuildDir -Filter *.dll -File | Copy-Item -Destination $stageDir
+$licenses = Join-Path $BuildDir "licenses"
+if (Test-Path $licenses) { Copy-Item $licenses (Join-Path $stageDir "licenses") -Recurse }
+if (-not (Test-Path (Join-Path $stageDir "heif.dll"))) { Write-Host "Note: no heif.dll in the build, so the installer has no HEIC support." -ForegroundColor Yellow }
 
 & (Join-Path $QtDir "bin\windeployqt.exe") --release --no-translations --no-system-d3d-compiler --no-opengl-sw `
     --no-compiler-runtime (Join-Path $stageDir "OnionImageViewer.exe")

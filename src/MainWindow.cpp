@@ -3,6 +3,7 @@
 #include "ColorTransform.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
+#include "HeifReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
 #include "FileItemDelegate.h"
@@ -226,6 +227,11 @@ QStringList supportedImageSuffixes()
     if (Exr::isAvailable()) {
         suffixes.append(QStringLiteral("exr"));
     }
+    if (Heif::isAvailable()) {
+        for (const char *heif : {"heic", "heif", "hif"}) {
+            suffixes.append(QString::fromLatin1(heif));
+        }
+    }
     suffixes.removeDuplicates();
     return suffixes;
 }
@@ -405,6 +411,10 @@ QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View vie
 
     if (Psd::isPsdFile(filePath)) {
         return displayThumbnail(Psd::read(filePath, nullptr, size), view, input, size);
+    }
+
+    if (Heif::isHeifFile(filePath)) {
+        return displayThumbnail(Heif::read(filePath, nullptr, size), view, input, size);
     }
 
     if (Vector::isVectorFile(filePath)) {
@@ -1280,7 +1290,7 @@ void MainWindow::openImage()
         this,
         QStringLiteral("Open Image"),
         QString(),
-        QStringLiteral("Images (*.ai *.bmp *.dpx *.eps *.epsf *.epsi *.exr *.gif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
+        QStringLiteral("Images (*.ai *.bmp *.dpx *.eps *.epsf *.epsi *.exr *.gif *.heic *.heif *.hif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)"));
 
     if (filePath.isEmpty()) {
         return;

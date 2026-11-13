@@ -3,6 +3,13 @@
   "version-string": "0.1.0",
   "builtin-baseline": "177e8175121536d414f405ed8b3099b325a42638",
   "dependencies": [
-    "openexr"
+    "openexr",
+    {
+      "name": "libheif",
+      "default-features": false,
+      "features": [
+        "libde265"
+      ]
+    }
   ]
 }

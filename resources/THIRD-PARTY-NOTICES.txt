@@ -1,0 +1,28 @@
+OnionImageViewer uses the following open source libraries.
+
+libheif (HEIF/HEIC reading)
+  Copyright (c) struktur AG, Dirk Farin and contributors
+  License: GNU Lesser General Public License v3.0 (see libheif.txt)
+  Source: https://github.com/strukturag/libheif
+  Shipped as heif.dll next to OnionImageViewer.exe.
+
+libde265 (HEVC decoding for HEIF/HEIC)
+  Copyright (c) struktur AG, Dirk Farin and contributors
+  License: GNU Lesser General Public License v3.0 (see libde265.txt)
+  Source: https://github.com/strukturag/libde265
+  Shipped as libde265.dll next to OnionImageViewer.exe.
+
+Both libraries are unmodified builds from vcpkg (https://github.com/microsoft/vcpkg, the
+versions pinned by vcpkg.json in the OnionImageViewer source). They are dynamically linked:
+you may replace heif.dll and libde265.dll with your own builds of a compatible version.
+
+Qt (user interface)
+  Copyright (c) The Qt Company Ltd. and other contributors
+  License: GNU Lesser General Public License v3.0
+  Source: https://download.qt.io/official_releases/qt/
+  Shipped as the Qt6*.dll files and plugins next to OnionImageViewer.exe.
+
+OpenEXR and Imath (EXR reading)
+  Copyright (c) Contributors to the OpenEXR Project
+  License: BSD 3-Clause
+  Source: https://github.com/AcademySoftwareFoundation/openexr

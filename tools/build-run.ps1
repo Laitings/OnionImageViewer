@@ -55,9 +55,14 @@ if ($running) {
 }
 
 # --- Configure (first time only; later builds re-run it by themselves when needed) --------------
-if (-not (Test-Path (Join-Path $buildDir "CMakeCache.txt"))) {
+# A build folder from before HEIF support (vcpkg triplet x64-windows-static-md) is configured
+# afresh once, so vcpkg builds libheif as a DLL and OpenEXR is found in the new triplet.
+$cache = Join-Path $buildDir "CMakeCache.txt"
+$fresh = (Test-Path $cache) -and (Select-String -Path $cache -Pattern "VCPKG_TARGET_TRIPLET:STRING=x64-windows-static-md" -SimpleMatch -Quiet)
+if ($fresh -or -not (Test-Path $cache)) {
     Step "Configuring build-msvc (Qt: $QtDir)"
     $configure = @("-S", $repo, "-B", $buildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_PREFIX_PATH=$QtDir")
+    if ($fresh) { $configure += "--fresh" }
     if ($ArriLutDir -and (Test-Path $ArriLutDir)) {
         $configure += "-DONION_ARRI_LUT_DIR=$($ArriLutDir -replace '\\','/')"
     }

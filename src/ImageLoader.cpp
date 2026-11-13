@@ -2,6 +2,7 @@
 
 #include "DpxReader.h"
 #include "ExrReader.h"
+#include "HeifReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
 
@@ -23,6 +24,12 @@ ImageLoader::Result QtImageLoader::load(const QString &filePath) const
     if (Exr::isExrFile(filePath)) {
         QString error;
         QImage image = Exr::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
+    if (Heif::isHeifFile(filePath)) {
+        QString error;
+        QImage image = Heif::read(filePath, &error);
         return {image, image.isNull() ? error : QString()};
     }
 
