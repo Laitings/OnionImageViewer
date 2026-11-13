@@ -28,7 +28,7 @@ public:
         const QPalette palette = QApplication::palette();
         QColor color = palette.color(QPalette::Active, QPalette::ButtonText);
         if (mode == QIcon::Disabled) {
-            color.setAlphaF(0.35);
+            color.setAlphaF(0.35f);
         } else if (mode == QIcon::Selected) {
             color = palette.color(QPalette::Active, QPalette::HighlightedText);
         }
