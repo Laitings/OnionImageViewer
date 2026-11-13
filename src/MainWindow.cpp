@@ -921,8 +921,6 @@ void MainWindow::createMenus()
     connect(editMenu, &QMenu::aboutToShow, this, &MainWindow::updateEditActions);
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("View"));
-    viewMenu->addAction(m_backAction);
-    viewMenu->addAction(m_upAction);
     QMenu *gridViewMenu = viewMenu->addMenu(QStringLiteral("Files As"));
     gridViewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
     gridViewMenu->addSeparator();
