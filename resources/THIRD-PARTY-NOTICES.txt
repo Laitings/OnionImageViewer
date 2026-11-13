@@ -33,3 +33,9 @@ OpenEXR and Imath (EXR reading)
   Copyright (c) Contributors to the OpenEXR Project
   License: BSD 3-Clause
   Source: https://github.com/AcademySoftwareFoundation/openexr
+
+libwebp (WebP reading)
+  Copyright (c) Google Inc.
+  License: BSD 3-Clause (see libwebp.txt)
+  Source: https://chromium.googlesource.com/webm/libwebp
+  Linked statically into OnionImageViewer.exe.

@@ -8,6 +8,7 @@
 #include "HeifReader.h"
 #include "PsdReader.h"
 #include "VectorReader.h"
+#include "WebpReader.h"
 #include "FileItemDelegate.h"
 #include "FileOps.h"
 #include "FolderTreePanel.h"
@@ -400,6 +401,9 @@ QStringList supportedImageSuffixes()
     if (Dng::isAvailable()) {
         suffixes.append(QStringLiteral("dng"));
     }
+    if (Webp::isAvailable()) {
+        suffixes.append(QStringLiteral("webp"));
+    }
     if (Heif::isAvailable()) {
         for (const char *heif : {"heic", "heif", "hif"}) {
             suffixes.append(QString::fromLatin1(heif));
@@ -592,6 +596,10 @@ QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View vie
 
     if (Heif::isHeifFile(filePath)) {
         return displayThumbnail(Heif::read(filePath, nullptr, size), view, input, size);
+    }
+
+    if (Webp::isWebpFile(filePath)) {
+        return displayThumbnail(Webp::read(filePath, nullptr, size), view, input, size);
     }
 
     if (Vector::isVectorFile(filePath)) {
@@ -1903,7 +1911,7 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     updateImageInfo();
     updateScopes();
     updatePixelReadout(m_hoveredPixel);
-    if (requested && QFileInfo(frame.path).suffix().compare(QLatin1String("gif"), Qt::CaseInsensitive) == 0) {
+    if (requested && FrameLoader::mayBeAnimated(frame.path)) {
         m_frameLoader->startGif(frame.path);
     }
 }

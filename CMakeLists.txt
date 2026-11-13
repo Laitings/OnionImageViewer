@@ -70,6 +70,8 @@ qt_add_executable(OnionImageViewer
     src/PsdReader.cpp
     src/VectorReader.h
     src/VectorReader.cpp
+    src/WebpReader.h
+    src/WebpReader.cpp
     src/ColorTransform.h
     src/ColorTransform.cpp
     src/Metadata.h
@@ -177,6 +179,17 @@ else()
     message(STATUS "libheif not found: building without HEIF/HEIC support")
 endif()
 
+# WebP through libwebp (BSD licence, linked statically), so .webp files work without the Qt Image
+# Formats add-on and animated WebP plays.
+find_package(WebP CONFIG QUIET)
+if(TARGET WebP::webp AND TARGET WebP::webpdemux)
+    message(STATUS "libwebp found: WebP support enabled")
+    target_link_libraries(OnionImageViewer PRIVATE WebP::webp WebP::webpdemux)
+    target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_LIBWEBP)
+else()
+    message(STATUS "libwebp not found: WebP files need Qt's WebP plugin (Qt Image Formats)")
+endif()
+
 # LibRaw's reentrant library can decode on multiple viewer and thumbnail workers.
 find_package(libraw CONFIG QUIET)
 if(TARGET libraw::raw_r)
@@ -202,7 +215,7 @@ if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:libraw::raw_r>" "$<TARGET_FILE_DIR:OnionImageViewer>"
             VERBATIM)
     endif()
-    foreach(ONION_NOTICE_LIB libheif libde265 libraw jasper lcms libjpeg-turbo zlib)
+    foreach(ONION_NOTICE_LIB libheif libde265 libraw libwebp jasper lcms libjpeg-turbo zlib)
         if(EXISTS "${ONION_VCPKG_PREFIX}/share/${ONION_NOTICE_LIB}/copyright")
             configure_file("${ONION_VCPKG_PREFIX}/share/${ONION_NOTICE_LIB}/copyright"
                 "${CMAKE_CURRENT_BINARY_DIR}/licenses/${ONION_NOTICE_LIB}.txt" COPYONLY)

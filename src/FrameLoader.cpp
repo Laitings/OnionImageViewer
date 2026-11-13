@@ -1,7 +1,9 @@
 #include "FrameLoader.h"
 
 #include "ImageLoader.h"
+#include "WebpReader.h"
 
+#include <QFileInfo>
 #include <QImageReader>
 #include <QMetaObject>
 
@@ -13,44 +15,79 @@ constexpr int PriorityPrefetch = 0;
 constexpr int MaxPrefetchJobs = 3;
 }
 
-// The reader stays on its worker thread. Reopening it at the end of a pass lets
-// long GIFs loop without keeping every decoded frame in memory.
+// The reader stays on its worker thread. Reopening it (or rewinding) at the end of a pass lets
+// long animations loop without keeping every decoded frame in memory. Animated WebP goes through
+// libwebp when the app has it, otherwise through Qt's WebP plugin like GIFs.
 class FrameLoader::GifReader final : public QObject
 {
 public:
     QImage read(const QString &path)
     {
         if (!path.isEmpty()) {
-            m_reader = std::make_unique<QImageReader>(path, QByteArrayLiteral("gif"));
-            if (m_reader->imageCount() < 2) {
-                reset();
-                return {};
+            reset();
+            if (Webp::isWebpFile(path)) {
+                auto webp = std::make_unique<Webp::Animation>();
+                if (!webp->open(path)) {
+                    return {};
+                }
+                m_repeats = webp->repeats();
+                m_webp = std::move(webp);
+            } else {
+                m_format = QFileInfo(path).suffix().toLower().toLatin1();
+                m_reader = std::make_unique<QImageReader>(path, m_format);
+                if (m_reader->imageCount() < 2) {
+                    reset();
+                    return {};
+                }
+                m_repeats = m_reader->loopCount();
             }
-            m_repeats = m_reader->loopCount();
         }
-        if (!m_reader) {
-            return {};
-        }
-        if (!m_reader->canRead() && m_repeats != 0) {
-            if (m_repeats > 0) {
-                --m_repeats;
+        QImage image;
+        if (m_webp) {
+            if (!m_webp->hasMoreFrames() && m_repeats != 0) {
+                if (m_repeats > 0) {
+                    --m_repeats;
+                }
+                m_webp->rewind();
             }
-            m_reader = std::make_unique<QImageReader>(m_reader->fileName(), QByteArrayLiteral("gif"));
+            image = m_webp->next(&m_delay);
+        } else if (m_reader) {
+            if (!m_reader->canRead() && m_repeats != 0) {
+                if (m_repeats > 0) {
+                    --m_repeats;
+                }
+                m_reader = std::make_unique<QImageReader>(m_reader->fileName(), m_format);
+            }
+            image = m_reader->read();
+            m_delay = m_reader->nextImageDelay();
         }
-        QImage image = m_reader->read();
         if (image.isNull()) {
             reset();
         }
         return image;
     }
 
-    int delay() const { return m_reader->nextImageDelay(); }
-    void reset() { m_reader.reset(); }
+    int delay() const { return m_delay; }
+    void reset()
+    {
+        m_reader.reset();
+        m_webp.reset();
+    }
 
 private:
     std::unique_ptr<QImageReader> m_reader;
+    std::unique_ptr<Webp::Animation> m_webp;
+    QByteArray m_format;
     int m_repeats = 0;
+    int m_delay = 0;
 };
+
+bool FrameLoader::mayBeAnimated(const QString &path)
+{
+    const QString suffix = QFileInfo(path).suffix();
+    return suffix.compare(QLatin1String("gif"), Qt::CaseInsensitive) == 0
+        || suffix.compare(QLatin1String("webp"), Qt::CaseInsensitive) == 0;
+}
 
 FrameLoader::FrameLoader(std::shared_ptr<const ImageLoader> loader, QObject *parent)
     : QObject(parent)
