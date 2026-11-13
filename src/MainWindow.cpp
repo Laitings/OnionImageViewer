@@ -21,6 +21,8 @@
 #include "OverlayButton.h"
 #include "NameFilter.h"
 #include "PathBar.h"
+#include "PlayerBar.h"
+#include "Sequence.h"
 #include "SplitPane.h"
 #include "UpdateChecker.h"
 
@@ -225,6 +227,10 @@ const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
 const QString SettingsSplitOrientation = QStringLiteral("viewer/splitOrientation");
 const QString SettingsSplitSync = QStringLiteral("viewer/splitSync");
+const QString SettingsPlaybackFps = QStringLiteral("playback/fps");
+const QString SettingsPlaybackLoop = QStringLiteral("playback/loop");
+const QString SettingsPlaybackRealTime = QStringLiteral("playback/realTime");
+const QString SettingsPlayerBarVisible = QStringLiteral("playback/showControls");
 const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
 const int IsImageRole = Qt::UserRole + 2;
@@ -276,7 +282,8 @@ constexpr int ThumbnailPriorityVisible = 1;
 constexpr int ThumbnailPriorityBackground = 0;
 constexpr int ThumbnailRetryDelayMs = 2000;
 constexpr int MaxThumbnailRetries = 30; // about a minute of retries
-constexpr int PlaybackFps = 24;
+constexpr double DefaultPlaybackFps = 24.0;
+constexpr int PlaybackPollMs = 4; // how often playback checks whether the next frame is due
 constexpr int PrefetchAhead = 6;
 
 // The frame number in a sequence file name ("DF_0078_0020_v001.1001.exr" -> "1001").
@@ -619,7 +626,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_frameLoader = new FrameLoader(m_imageLoader, this);
     connect(m_frameLoader, &FrameLoader::frameReady, this, &MainWindow::showFrame);
     connect(m_frameLoader, &FrameLoader::gifFrameReady, this, &MainWindow::showGifFrame);
-    m_playTimer.setInterval(1000 / PlaybackFps);
+    m_playTimer.setTimerType(Qt::PreciseTimer);
+    m_playTimer.setInterval(PlaybackPollMs);
     connect(&m_playTimer, &QTimer::timeout, this, &MainWindow::playbackTick);
     createActions();
     createMenus();
@@ -869,8 +877,17 @@ void MainWindow::createActions()
     m_playAction = new QAction(QStringLiteral("Play / Pause"), this);
     m_playAction->setShortcut(QKeySequence(Qt::Key_Space));
     m_playAction->setShortcutContext(Qt::WidgetShortcut); // handled by the viewer's key filter
-    m_playAction->setToolTip(QStringLiteral("Play through the images of the folder (Space)"));
+    m_playAction->setToolTip(QStringLiteral("Play the image sequence, or the images of the folder (Space)"));
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
+
+    m_playerBarAction = new QAction(QStringLiteral("Player Controls"), this);
+    m_playerBarAction->setCheckable(true);
+    m_playerBarAction->setChecked(true);
+    m_playerBarAction->setToolTip(QStringLiteral("Show the play controls and scrub bar under image sequences"));
+    connect(m_playerBarAction, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue(SettingsPlayerBarVisible, on);
+        updatePlayerBar();
+    });
 
     m_compareGroup = new QActionGroup(this);
     m_compareGroup->setExclusive(true);
@@ -1140,6 +1157,7 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_actualSizeAction);
     viewMenu->addSeparator();
     viewMenu->addAction(m_playAction);
+    viewMenu->addAction(m_playerBarAction);
     viewMenu->addSeparator();
     QMenu *compareMenu = viewMenu->addMenu(QStringLiteral("Compare"));
     compareMenu->addActions(m_compareGroup->actions());
@@ -1169,6 +1187,8 @@ void MainWindow::createMenus()
             "  Shift+Left / Right  10 images back / forward\n"
             "  Home / End  first / last image\n"
             "  Space  play / pause\n"
+            "  In an image sequence these step through its frames in frame order, and the\n"
+            "    player bar below the image has a scrub bar and the playback speed\n"
             "  W  compare wipe on / off\n"
             "  P  pin this image as the compare image\n"
             "  V  split viewer on / off (a second pane with its own file grid)\n"
@@ -1494,6 +1514,39 @@ void MainWindow::createCentralLayout()
     m_viewerSplitter->addWidget(m_imageViewport);
     m_viewerSplitter->addWidget(m_splitPane);
     imageLayout->addWidget(m_viewerSplitter, 0, 0);
+    imageLayout->setRowStretch(0, 1);
+
+    // Transport bar for image sequences, under both panes; it drives the main pane.
+    m_playerBar = new PlayerBar(imagePage);
+    m_playerBar->hide();
+    imageLayout->addWidget(m_playerBar, 1, 0);
+    connect(m_playerBar, &PlayerBar::playToggled, this, &MainWindow::togglePlayback);
+    connect(m_playerBar, &PlayerBar::stepRequested, this, [this](int delta) {
+        stopPlayback();
+        stepImage(delta);
+    });
+    connect(m_playerBar, &PlayerBar::firstRequested, this, [this]() {
+        stopPlayback();
+        goToPlaybackPosition(0);
+    });
+    connect(m_playerBar, &PlayerBar::lastRequested, this, [this]() {
+        stopPlayback();
+        goToPlaybackPosition(playbackCount() - 1);
+    });
+    connect(m_playerBar, &PlayerBar::scrubbed, this, [this](int position) {
+        stopPlayback();
+        goToPlaybackPosition(position);
+    });
+    connect(m_playerBar, &PlayerBar::fpsChanged, this, &MainWindow::setPlaybackFps);
+    connect(m_playerBar, &PlayerBar::loopChanged, this, [this](bool on) {
+        m_playLoop = on;
+        QSettings().setValue(SettingsPlaybackLoop, on);
+    });
+    connect(m_playerBar, &PlayerBar::realTimeChanged, this, [this](bool on) {
+        m_playRealTime = on;
+        QSettings().setValue(SettingsPlaybackRealTime, on);
+        restartPlaybackClock();
+    });
     connect(m_viewerSplitter, &QSplitter::splitterMoved, this, &MainWindow::layoutSplitHeader);
     connect(m_contentStack, &QStackedWidget::currentChanged, this, &MainWindow::layoutSplitHeader);
     connect(m_splitPane, &SplitPane::closeRequested, this, [this]() {
@@ -1668,6 +1721,20 @@ void MainWindow::loadSettings()
     m_folderTreePanel->setQuickAccessExpanded(settings.value(SettingsQuickAccessExpanded, true).toBool());
     m_folderTreePanel->setThisPcExpanded(settings.value(SettingsThisPcExpanded, true).toBool());
 
+    m_playbackFps = settings.value(SettingsPlaybackFps, DefaultPlaybackFps).toDouble();
+    if (!(m_playbackFps > 0 && m_playbackFps <= 1000)) {
+        m_playbackFps = DefaultPlaybackFps;
+    }
+    m_playLoop = settings.value(SettingsPlaybackLoop, true).toBool();
+    m_playRealTime = settings.value(SettingsPlaybackRealTime, false).toBool();
+    {
+        const QSignalBlocker blocker(m_playerBar);
+        m_playerBar->setFps(m_playbackFps);
+        m_playerBar->setLoop(m_playLoop);
+        m_playerBar->setRealTime(m_playRealTime);
+    }
+    m_playerBarAction->setChecked(settings.value(SettingsPlayerBarVisible, true).toBool());
+
     const bool foldersVisible = settings.value(SettingsFoldersVisible, false).toBool();
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
@@ -1745,6 +1812,8 @@ void MainWindow::openImagePath(const QString &filePath)
         m_currentImagePaths.append(filePath);
         index = m_currentImagePaths.size() - 1;
     }
+    m_sequence.clear(); // the list may have changed: look the sequence up again
+    m_sequencePositions.clear();
 
     addRecentImage(filePath);
     stopPlayback();
@@ -1765,11 +1834,20 @@ void MainWindow::goToImage(int index)
         return;
     }
     m_frameLoader->stopGif();
-    if (index != m_currentImageIndex && m_currentImageIndex >= 0) {
-        m_stepDirection = index > m_currentImageIndex ? 1 : -1;
-    }
+    const int previousIndex = m_currentImageIndex;
+    const int previousPosition = previousIndex >= 0 ? playbackPositionOf(previousIndex) : -1;
     m_currentImageIndex = index;
+    updateSequence();
+    if (index != previousIndex && previousIndex >= 0) {
+        // Within a sequence, the direction follows frame order rather than folder order.
+        const int position = playbackPositionOf(index);
+        const int before = playbackPositionOf(previousIndex);
+        m_stepDirection = (position >= 0 && before >= 0 && before == previousPosition)
+                              ? (position > before ? 1 : -1)
+                              : (index > previousIndex ? 1 : -1);
+    }
     updateImageNavigation();
+    updatePlayerBar();
     const QString path = m_currentImagePaths.at(index);
     if (m_displayedIndex >= 0 && !m_frameLoader->isCached(path)) {
         // Show at once which frame is coming, even if the picture takes a moment.
@@ -1788,7 +1866,30 @@ void MainWindow::stepImage(int delta, bool wrap)
         return;
     }
     int index = m_currentImageIndex + delta;
-    if (wrap) {
+    if (!m_sequence.isEmpty()) {
+        // In a sequence, step through its frames in frame order. At either end, step on to the
+        // folder's next image outside the sequence.
+        const int frames = int(m_sequence.size());
+        const int current = m_sequencePositions.value(m_currentImageIndex);
+        int position = current + delta;
+        if (wrap) {
+            position = ((position % frames) + frames) % frames;
+        }
+        if (position >= 0 && position < frames) {
+            index = m_sequence.at(position);
+        } else if (current != (delta > 0 ? frames - 1 : 0)) {
+            index = m_sequence.at(qBound(0, position, frames - 1)); // a big step stops at the end first
+        } else {
+            const int direction = delta > 0 ? 1 : -1;
+            index = m_currentImageIndex + direction;
+            while (index >= 0 && index < count && m_sequencePositions.contains(index)) {
+                index += direction;
+            }
+            if (index < 0 || index >= count) {
+                return;
+            }
+        }
+    } else if (wrap) {
         index = ((index % count) + count) % count;
     } else {
         index = qBound(0, index, count - 1);
@@ -1802,20 +1903,25 @@ void MainWindow::stepImage(int delta, bool wrap)
 void MainWindow::prefetchAround()
 {
     QStringList paths;
-    const int count = m_currentImagePaths.size();
-    const int ahead = m_playTimer.isActive() ? PrefetchAhead * 2 : PrefetchAhead;
+    const int count = playbackCount();
+    const int current = playbackPositionOf(m_currentImageIndex);
+    if (count == 0 || current < 0) {
+        return;
+    }
+    const bool playing = m_playTimer.isActive();
+    const int ahead = playing ? PrefetchAhead * 2 : PrefetchAhead;
     for (int i = 1; i <= ahead; ++i) {
-        int index = m_currentImageIndex + i * m_stepDirection;
-        if (m_playTimer.isActive()) {
-            index = ((index % count) + count) % count;
+        int position = current + i * m_stepDirection;
+        if (playing && m_playLoop) {
+            position = ((position % count) + count) % count;
         }
-        if (index >= 0 && index < count) {
-            paths.append(m_currentImagePaths.at(index));
+        if (position >= 0 && position < count && position != current) {
+            paths.append(m_currentImagePaths.at(indexAtPlaybackPosition(position)));
         }
     }
-    const int behind = m_currentImageIndex - m_stepDirection;
+    const int behind = current - m_stepDirection;
     if (behind >= 0 && behind < count) {
-        paths.append(m_currentImagePaths.at(behind));
+        paths.append(m_currentImagePaths.at(indexAtPlaybackPosition(behind)));
     }
     m_frameLoader->prefetch(paths);
 }
@@ -1831,9 +1937,12 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     }
     if (!requested) {
         // While scrubbing, show frames that arrive on the way to the wanted one.
-        const bool between = m_displayedIndex >= 0
-            && ((m_stepDirection > 0 && index > m_displayedIndex && index < m_currentImageIndex)
-                || (m_stepDirection < 0 && index < m_displayedIndex && index > m_currentImageIndex));
+        const int position = playbackPositionOf(index);
+        const int shown = m_displayedIndex >= 0 ? playbackPositionOf(m_displayedIndex) : -1;
+        const int wanted = playbackPositionOf(m_currentImageIndex);
+        const bool between = position >= 0 && shown >= 0 && wanted >= 0
+            && ((m_stepDirection > 0 && position > shown && position < wanted)
+                || (m_stepDirection < 0 && position < shown && position > wanted));
         if (!between || !frame.error.isEmpty()) {
             return;
         }
@@ -1855,6 +1964,19 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     m_currentDisplayImage = frame.display;
     m_currentImagePath = frame.path;
     m_displayedIndex = index;
+    if (m_playTimer.isActive()) {
+        // Measure the rate actually reached over about the last second.
+        const qint64 now = m_playClock.nsecsElapsed();
+        m_playShownNs.append(now);
+        while (m_playShownNs.size() > 2 && now - m_playShownNs.first() > 1000000000LL) {
+            m_playShownNs.removeFirst();
+        }
+        if (m_playShownNs.size() >= 3 && now - m_measuredShownNs > 250000000LL) {
+            m_measuredShownNs = now;
+            const double seconds = double(now - m_playShownNs.first()) / 1e9;
+            m_playerBar->setMeasuredFps(double(m_playShownNs.size() - 1) / seconds);
+        }
+    }
     scheduleMetadata();
     m_imageViewport->setImage(frame.display, !m_freshOpen);
     m_freshOpen = false;
@@ -1891,42 +2013,194 @@ void MainWindow::togglePlayback()
         stopPlayback();
         return;
     }
-    if (!isViewerVisible() || m_currentImagePaths.size() < 2) {
+    if (!isViewerVisible() || playbackCount() < 2 || m_currentImageIndex < 0) {
         return;
     }
+    // Without looping, playing from the last frame starts again from the first.
+    if (!m_playLoop && playbackPositionOf(m_currentImageIndex) >= playbackCount() - 1) {
+        m_freshOpen = false;
+        goToPlaybackPosition(0);
+    }
     m_stepDirection = 1;
+    m_playShownNs.clear();
+    m_measuredShownNs = 0;
+    m_playClock.start();
+    restartPlaybackClock();
     m_playTimer.start();
+    m_playerBar->setPlaying(true);
     for (OverlayButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
         button->conceal(); // keep the picture clear while playing
     }
     prefetchAround();
-    statusBar()->showMessage(QStringLiteral("Playing at up to %1 fps (Space to stop)").arg(PlaybackFps), 3000);
+    statusBar()->showMessage(QStringLiteral("Playing %1 at %2 fps (Space to stop)")
+                                 .arg(m_sequence.isEmpty() ? QStringLiteral("the folder") : QStringLiteral("the sequence"),
+                                      PlayerBar::fpsText(m_playbackFps)),
+                             3000);
 }
 
 void MainWindow::stopPlayback()
 {
     if (m_playTimer.isActive()) {
         m_playTimer.stop();
+        m_playerBar->setPlaying(false);
         statusBar()->showMessage(QStringLiteral("Stopped"), 1500);
     }
 }
 
-// Plays as fast as frames are ready, up to PlaybackFps: waits for a frame instead of skipping it.
+// Starts timing playback afresh from the frame wanted now, e.g. after a change of rate.
+void MainWindow::restartPlaybackClock()
+{
+    if (!m_playClock.isValid()) {
+        return;
+    }
+    const qint64 now = m_playClock.nsecsElapsed();
+    m_playAnchorNs = now;
+    m_playAnchorPosition = qMax(0, playbackPositionOf(m_currentImageIndex));
+    m_nextFrameDueNs = now + qint64(1e9 / m_playbackFps);
+}
+
+void MainWindow::setPlaybackFps(double fps)
+{
+    if (!(fps > 0)) {
+        return;
+    }
+    m_playbackFps = fps;
+    m_playerBar->setFps(fps);
+    QSettings().setValue(SettingsPlaybackFps, fps);
+    m_playShownNs.clear();
+    restartPlaybackClock();
+    if (m_playTimer.isActive()) {
+        statusBar()->showMessage(QStringLiteral("Playing at %1 fps").arg(PlayerBar::fpsText(fps)), 2000);
+    }
+}
+
+// Runs every few milliseconds while playing and moves on when the next frame is due. Normally
+// every frame is shown: when one isn't loaded yet, playback waits for it (and so runs slower than
+// the chosen rate). In real-time mode the frame is picked from the clock instead, so frames that
+// don't load in time are skipped and the clip keeps its length.
 void MainWindow::playbackTick()
 {
-    const int count = m_currentImagePaths.size();
-    if (!isViewerVisible() || count < 2) {
+    const int count = playbackCount();
+    if (!isViewerVisible() || count < 2 || m_currentImageIndex < 0) {
         stopPlayback();
         return;
     }
-    if (m_displayedIndex != m_currentImageIndex) {
-        return; // the current frame hasn't arrived yet
+    const qint64 now = m_playClock.nsecsElapsed();
+    const int current = playbackPositionOf(m_currentImageIndex);
+
+    if (m_playRealTime) {
+        const qint64 elapsedFrames = qint64(double(now - m_playAnchorNs) * m_playbackFps / 1e9);
+        qint64 target = m_playAnchorPosition + elapsedFrames;
+        if (target >= count) {
+            if (!m_playLoop) {
+                if (current != count - 1) {
+                    goToPlaybackPosition(count - 1);
+                }
+                stopPlayback();
+                return;
+            }
+            target %= count;
+        }
+        if (int(target) != current) {
+            m_stepDirection = 1;
+            m_freshOpen = false;
+            goToPlaybackPosition(int(target));
+        }
+        return;
     }
-    const int next = (m_currentImageIndex + 1) % count;
-    if (m_frameLoader->isCached(m_currentImagePaths.at(next))) {
-        stepImage(1, true);
+
+    if (m_displayedIndex != m_currentImageIndex || now < m_nextFrameDueNs) {
+        return; // the current frame hasn't arrived yet, or it isn't time for the next one
+    }
+    int next = current + 1;
+    if (next >= count) {
+        if (!m_playLoop) {
+            stopPlayback();
+            return;
+        }
+        next = 0;
+    }
+    if (m_frameLoader->isCached(m_currentImagePaths.at(indexAtPlaybackPosition(next)))) {
+        const qint64 period = qint64(1e9 / m_playbackFps);
+        m_nextFrameDueNs += period;
+        if (m_nextFrameDueNs < now - period) {
+            m_nextFrameDueNs = now + period; // fell behind: don't rush to catch up
+        }
+        m_stepDirection = 1;
+        m_freshOpen = false;
+        goToPlaybackPosition(next);
     } else {
         prefetchAround();
+    }
+}
+
+void MainWindow::updateSequence()
+{
+    if (m_currentImageIndex < 0 || m_currentImageIndex >= m_currentImagePaths.size()) {
+        m_sequence.clear();
+        m_sequencePositions.clear();
+        return;
+    }
+    if (m_sequencePositions.contains(m_currentImageIndex)) {
+        return; // still in the same sequence
+    }
+    m_sequence = Sequence::framesOf(m_currentImagePaths, m_currentImageIndex);
+    m_sequencePositions.clear();
+    m_sequencePositions.reserve(m_sequence.size());
+    for (int i = 0; i < m_sequence.size(); ++i) {
+        m_sequencePositions.insert(m_sequence.at(i), i);
+    }
+}
+
+int MainWindow::playbackCount() const
+{
+    return m_sequence.isEmpty() ? int(m_currentImagePaths.size()) : int(m_sequence.size());
+}
+
+int MainWindow::playbackPositionOf(int index) const
+{
+    if (m_sequence.isEmpty()) {
+        return index >= 0 && index < m_currentImagePaths.size() ? index : -1;
+    }
+    return m_sequencePositions.value(index, -1);
+}
+
+int MainWindow::indexAtPlaybackPosition(int position) const
+{
+    return m_sequence.isEmpty() ? position : m_sequence.at(position);
+}
+
+void MainWindow::goToPlaybackPosition(int position)
+{
+    const int count = playbackCount();
+    if (count == 0) {
+        return;
+    }
+    m_freshOpen = false;
+    goToImage(indexAtPlaybackPosition(qBound(0, position, count - 1)));
+}
+
+void MainWindow::updatePlayerBar()
+{
+    if (!m_playerBar || !m_playerBarAction) {
+        return;
+    }
+    const bool show = m_playerBarAction->isChecked() && m_sequence.size() >= 2 && m_currentImageIndex >= 0;
+    if (show) {
+        const QString name = Sequence::displayName(m_currentImagePaths, m_sequence);
+        const QString shownKey = name + QLatin1Char('|') + QString::number(m_sequence.size());
+        if (m_playerBar->property("sequenceName").toString() != shownKey) {
+            m_playerBar->setProperty("sequenceName", shownKey);
+            m_playerBar->setSequence(name, int(m_sequence.size()));
+        }
+        const QString path = m_currentImagePaths.at(m_currentImageIndex);
+        m_playerBar->setPosition(m_sequencePositions.value(m_currentImageIndex),
+                                 Sequence::split(QFileInfo(path).fileName()).frame);
+    } else {
+        m_playerBar->setProperty("sequenceName", QString());
+    }
+    if (m_playerBar->isVisible() != show) {
+        m_playerBar->setVisible(show);
     }
 }
 
@@ -1967,13 +2241,11 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
     }
     case Qt::Key_Home:
         stopPlayback();
-        m_freshOpen = false;
-        goToImage(0);
+        goToPlaybackPosition(0); // the sequence's first frame, or the folder's first image
         return true;
     case Qt::Key_End:
         stopPlayback();
-        m_freshOpen = false;
-        goToImage(m_currentImagePaths.size() - 1);
+        goToPlaybackPosition(playbackCount() - 1);
         return true;
     case Qt::Key_Space:
         if (!event->isAutoRepeat()) {
@@ -3781,6 +4053,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_currentFolderPath = folderPath;
     m_currentImagePaths.clear();
     m_currentImageIndex = -1;
+    m_sequence.clear();
+    m_sequencePositions.clear();
     m_pendingThumbnailPaths.clear();
     m_thumbnailItems.clear();
     m_thumbnailRetryCounts.clear();
@@ -3996,10 +4270,14 @@ void MainWindow::setImageListFromFolder(const QString &folderPath)
     if (!folder.exists()) {
         m_currentImagePaths.clear();
         m_currentImageIndex = -1;
+        m_sequence.clear();
+        m_sequencePositions.clear();
         return;
     }
 
     m_currentImagePaths.clear();
+    m_sequence.clear();
+    m_sequencePositions.clear();
     const QFileInfoList files = folder.entryInfoList(
         QDir::Files,
         QDir::Name | QDir::IgnoreCase);

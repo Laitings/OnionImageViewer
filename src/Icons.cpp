@@ -226,6 +226,53 @@ private:
             }
             p->drawPath(path);
             break;
+        case Kind::Play:
+            path.moveTo(8, 5);
+            path.lineTo(19, 12);
+            path.lineTo(8, 19);
+            path.closeSubpath();
+            p->setBrush(color);
+            p->drawPath(path);
+            break;
+        case Kind::Pause:
+            p->setBrush(color);
+            p->drawRoundedRect(QRectF(7, 5, 3.2, 14), 0.8, 0.8);
+            p->drawRoundedRect(QRectF(13.8, 5, 3.2, 14), 0.8, 0.8);
+            break;
+        case Kind::FirstFrame:
+        case Kind::LastFrame: {
+            // A bar and a filled triangle pointing at it.
+            const bool first = m_kind == Kind::FirstFrame;
+            const qreal bar = first ? 6 : 18;
+            path.moveTo(first ? 18 : 6, 6);
+            path.lineTo(first ? 8.5 : 15.5, 12);
+            path.lineTo(first ? 18 : 6, 18);
+            path.closeSubpath();
+            p->setBrush(color);
+            p->drawPath(path);
+            p->drawLine(QPointF(bar, 6), QPointF(bar, 18));
+            break;
+        }
+        case Kind::PreviousFrame:
+        case Kind::NextFrame: {
+            // A single frame step: an open chevron next to a bar.
+            const bool previous = m_kind == Kind::PreviousFrame;
+            path.moveTo(previous ? 16 : 8, 6);
+            path.lineTo(previous ? 10 : 14, 12);
+            path.lineTo(previous ? 16 : 8, 18);
+            p->drawPath(path);
+            const qreal bar = previous ? 7 : 17;
+            p->drawLine(QPointF(bar, 6), QPointF(bar, 18));
+            break;
+        }
+        case Kind::Loop:
+            // A loop with an arrowhead on its top edge.
+            p->drawRoundedRect(QRectF(4, 7, 16, 10), 5, 5);
+            path.moveTo(11, 4.5);
+            path.lineTo(13.5, 7);
+            path.lineTo(11, 9.5);
+            p->drawPath(path);
+            break;
         }
     }
 

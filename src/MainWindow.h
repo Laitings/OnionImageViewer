@@ -4,7 +4,9 @@
 #include "ColorTransform.h"
 #include "FrameLoader.h"
 
+#include <QElapsedTimer>
 #include <QImage>
+#include <QVector>
 #include <QMainWindow>
 #include <QPersistentModelIndex>
 #include <QPointer>
@@ -49,6 +51,7 @@ class QProgressDialog;
 namespace FileOps { class Job; }
 class QStackedWidget;
 class SplitPane;
+class PlayerBar;
 
 class MainWindow final : public QMainWindow
 {
@@ -133,6 +136,17 @@ private:
     void togglePlayback();
     void stopPlayback();
     void playbackTick();
+    // Image sequences: the frames of the sequence the open image belongs to (m_sequence), and
+    // playback positions, which count through that sequence, or through the folder's images when
+    // the open image isn't part of one.
+    void updateSequence();
+    int playbackCount() const;
+    int playbackPositionOf(int index) const;
+    int indexAtPlaybackPosition(int position) const;
+    void goToPlaybackPosition(int position);
+    void updatePlayerBar();
+    void setPlaybackFps(double fps);
+    void restartPlaybackClock();
     bool handleViewerKey(QKeyEvent *event);
     void refreshCurrentDisplay();
     void updateScopes();
@@ -243,6 +257,19 @@ private:
     int m_metadataGeneration = 0;
     bool m_wasMaximized = false;
     QTimer m_playTimer;
+    PlayerBar *m_playerBar = nullptr;
+    QAction *m_playerBarAction = nullptr;
+    QVector<int> m_sequence;            // indices into m_currentImagePaths, in frame order
+    QHash<int, int> m_sequencePositions; // index into m_currentImagePaths -> position in m_sequence
+    double m_playbackFps = 24.0;
+    bool m_playLoop = true;
+    bool m_playRealTime = false;
+    QElapsedTimer m_playClock;
+    qint64 m_playAnchorNs = 0;   // real-time playback: when m_playAnchorPosition was due
+    int m_playAnchorPosition = 0;
+    qint64 m_nextFrameDueNs = 0; // every-frame playback: when the next frame is due
+    QVector<qint64> m_playShownNs; // when recent frames were shown, for the measured rate
+    qint64 m_measuredShownNs = 0;
     QImage m_currentDisplayImage;
     QString m_currentImagePath;
     QImage m_pinnedSource;

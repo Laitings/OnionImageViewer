@@ -91,6 +91,10 @@ qt_add_executable(OnionImageViewer
     src/NameFilter.h
     src/SplitPane.h
     src/SplitPane.cpp
+    src/PlayerBar.h
+    src/PlayerBar.cpp
+    src/Sequence.h
+    src/Sequence.cpp
     src/Icons.h
     src/Icons.cpp
     src/FileItemDelegate.h

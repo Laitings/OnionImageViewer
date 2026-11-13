@@ -24,6 +24,14 @@ enum class Kind {
     ThisPC,      // a monitor, for the drives section of the folder panel
     Pin,
     Unpin,
+    // Player controls for image sequences.
+    Play,
+    Pause,
+    FirstFrame,
+    PreviousFrame,
+    NextFrame,
+    LastFrame,
+    Loop,
 };
 
 QIcon icon(Kind kind);
