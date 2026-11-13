@@ -5,6 +5,7 @@
 
 #include <QImage>
 #include <QMainWindow>
+#include <QPersistentModelIndex>
 #include <QHash>
 #include <QSet>
 #include <QThreadPool>
@@ -35,6 +36,8 @@ class QSlider;
 class QHeaderView;
 class FileItemDelegate;
 class QSplitter;
+class QProgressDialog;
+namespace FileOps { class Job; }
 class QStackedWidget;
 
 class MainWindow final : public QMainWindow
@@ -136,6 +139,14 @@ private:
     void copyPathToClipboard(const QString &path);
     void showInExplorer(const QString &path);
     void showGridContextMenu(const QPoint &pos);
+
+    // File browser selection and the file clipboard (copy, cut and paste, also with Explorer).
+    bool handleGridSelectionEvent(QObject *watched, QEvent *event);
+    QStringList selectedPaths() const;
+    void copySelectedFiles(bool cut);
+    void pasteFiles(const QString &targetFolder);
+    void finishFileJob();
+    void updateEditActions();
     QString currentPath() const;
     void scheduleMetadata();
     void addRecentImage(const QString &filePath);
@@ -158,6 +169,19 @@ private:
     QAction *m_exportAction = nullptr;
     QAction *m_copyPathAction = nullptr;
     QAction *m_showInExplorerAction = nullptr;
+    QAction *m_cutAction = nullptr;
+    QAction *m_copyFilesAction = nullptr;
+    QAction *m_pasteAction = nullptr;
+    QAction *m_selectAllAction = nullptr;
+    QAction *m_invertSelectionAction = nullptr;
+    QPersistentModelIndex m_selectionAnchor;
+    bool m_shiftSelecting = false;
+    bool m_shiftPressTaken = false;
+    FileOps::Job *m_fileJob = nullptr;
+    QProgressDialog *m_fileJobProgress = nullptr;
+    QTimer m_fileJobTimer;
+    QString m_fileJobTarget;
+    QStringList m_fileJobSourceFolders;
     QList<QWidget *> m_hiddenForFullScreen;
     MetadataPanel *m_metadataPanel = nullptr;
     QDockWidget *m_metadataDock = nullptr;

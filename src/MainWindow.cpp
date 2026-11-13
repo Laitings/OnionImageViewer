@@ -5,6 +5,7 @@
 #include "ExrReader.h"
 #include "PsdReader.h"
 #include "FileItemDelegate.h"
+#include "FileOps.h"
 #include "FolderTreePanel.h"
 #include "ImageLoader.h"
 #include "Icons.h"
@@ -37,6 +38,7 @@
 #include <QIcon>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QKeyEvent>
 #include <QFloat16>
@@ -54,6 +56,7 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPixmap>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -110,6 +113,7 @@ const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
 const int IsImageRole = Qt::UserRole + 2;
 const int ThumbnailLoadedRole = Qt::UserRole + 3;
+const int FileSizeRole = Qt::UserRole + 4;
 // Thumbnails are made at one of two resolutions: 128 px (the classic size; its cache stays valid)
 // or 256 px when the grid shows them bigger than 128. The grid scales them to the chosen size.
 constexpr int SmallThumbnailResolution = 128;
@@ -537,6 +541,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    if (m_fileGrid && !m_shiftSelecting && handleGridSelectionEvent(watched, event)) {
+        return true;
+    }
     if (event->type() == QEvent::Resize && (watched == this || watched == m_metadataDock || watched == m_contentStack)) {
         QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     }
@@ -748,7 +755,43 @@ void MainWindow::createActions()
     m_copyPathAction = new QAction(QStringLiteral("Copy Path"), this);
     m_copyPathAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     connect(m_copyPathAction, &QAction::triggered, this, [this]() {
-        copyPathToClipboard(currentPath());
+        const QStringList paths = isViewerVisible() ? QStringList() : selectedPaths();
+        copyPathToClipboard(paths.isEmpty() ? currentPath() : paths.join(QLatin1Char('\n')));
+    });
+
+    // File clipboard, like Explorer: files copied here paste in Explorer and the other way round.
+    // Ctrl+C is m_copyImageAction's shortcut; in the file browser it copies the selected files.
+    m_cutAction = new QAction(QStringLiteral("Cut"), this);
+    m_cutAction->setShortcut(QKeySequence::Cut);
+    connect(m_cutAction, &QAction::triggered, this, [this]() {
+        copySelectedFiles(true);
+    });
+    // Shows Ctrl+C without owning it (the shortcut belongs to m_copyImageAction).
+    m_copyFilesAction = new QAction(QStringLiteral("Copy\t%1").arg(QKeySequence(QKeySequence::Copy).toString(QKeySequence::NativeText)), this);
+    connect(m_copyFilesAction, &QAction::triggered, this, [this]() {
+        copySelectedFiles(false);
+    });
+    m_pasteAction = new QAction(QStringLiteral("Paste"), this);
+    m_pasteAction->setShortcut(QKeySequence::Paste);
+    connect(m_pasteAction, &QAction::triggered, this, [this]() {
+        if (!isViewerVisible()) {
+            pasteFiles(m_currentFolderPath);
+        }
+    });
+    m_selectAllAction = new QAction(QStringLiteral("Select All"), this);
+    m_selectAllAction->setShortcut(QKeySequence::SelectAll);
+    connect(m_selectAllAction, &QAction::triggered, this, [this]() {
+        if (!isViewerVisible()) {
+            m_fileGrid->selectAll();
+        }
+    });
+    m_invertSelectionAction = new QAction(QStringLiteral("Invert Selection"), this);
+    connect(m_invertSelectionAction, &QAction::triggered, this, [this]() {
+        if (isViewerVisible()) {
+            return;
+        }
+        QItemSelection all(m_fileGrid->model()->index(0, 0), m_fileGrid->model()->index(m_fileGrid->count() - 1, 0));
+        m_fileGrid->selectionModel()->select(all, QItemSelectionModel::Toggle);
     });
 
 #ifdef Q_OS_WIN
@@ -807,6 +850,15 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("Exit"), this, &QWidget::close);
 
+    QMenu *editMenu = menuBar()->addMenu(QStringLiteral("Edit"));
+    editMenu->addAction(m_cutAction);
+    editMenu->addAction(m_copyImageAction);
+    editMenu->addAction(m_pasteAction);
+    editMenu->addSeparator();
+    editMenu->addAction(m_selectAllAction);
+    editMenu->addAction(m_invertSelectionAction);
+    connect(editMenu, &QMenu::aboutToShow, this, &MainWindow::updateEditActions);
+
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("View"));
     viewMenu->addAction(m_backAction);
     viewMenu->addAction(m_upAction);
@@ -853,6 +905,11 @@ void MainWindow::createMenus()
             "  Ctrl+1  Auto (from file tags)\n"
             "  Ctrl+0 / 3 / 4  None / LogC3 / LogC4\n"
             "  Ctrl+L  LUT file,  Ctrl+Shift+L  load a LUT\n\n"
+            "File browser (like Explorer):\n"
+            "  Click, Ctrl+click, Shift+click, or drag a box around files to select them\n"
+            "  Shift+arrows extend the selection,  Ctrl+arrows move without selecting,\n"
+            "  Ctrl+Space selects or unselects,  Ctrl+A selects all\n"
+            "  Ctrl+C / Ctrl+X / Ctrl+V  copy / cut / paste files (also to and from Explorer)\n\n"
             "Anywhere:\n"
             "  Alt+D or F4  type or paste a path\n"
             "  F11  full screen\n"
@@ -985,7 +1042,10 @@ void MainWindow::createCentralLayout()
     m_fileGrid->setIconSize(QSize(m_thumbnailDisplaySize, m_thumbnailDisplaySize));
     m_fileGrid->setGridSize(QSize(qMax(m_thumbnailDisplaySize + 42, 112), m_thumbnailDisplaySize + 40));
     m_fileGrid->setSpacing(10);
-    m_fileGrid->setSelectionMode(QAbstractItemView::SingleSelection);
+    // Explorer-style selection: Ctrl/Shift+click, Shift/Ctrl+arrows, Ctrl+A and a box dragged
+    // from empty space.
+    m_fileGrid->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    m_fileGrid->setSelectionRectVisible(true);
     m_fileGrid->setWordWrap(true);
     m_fileGrid->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_fileGrid, &QWidget::customContextMenuRequested, this, &MainWindow::showGridContextMenu);
@@ -1098,6 +1158,17 @@ void MainWindow::createCentralLayout()
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
     connect(m_fileGrid, &QListWidget::currentItemChanged, this, &MainWindow::scheduleMetadata);
+    connect(m_fileGrid, &QListWidget::itemSelectionChanged, this, &MainWindow::updateImageInfo);
+    connect(m_fileGrid->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &current) {
+        if (!m_shiftSelecting) {
+            m_selectionAnchor = current; // Shift+click and Shift+arrows select from here
+        }
+    });
+    // Keep Cut/Copy/Paste (and their shortcuts) enabled only when they can do something.
+    connect(m_fileGrid, &QListWidget::itemSelectionChanged, this, &MainWindow::updateEditActions);
+    connect(m_contentStack, &QStackedWidget::currentChanged, this, &MainWindow::updateEditActions);
+    connect(QApplication::clipboard(), &QClipboard::dataChanged, this, &MainWindow::updateEditActions);
+    updateEditActions();
     connect(m_fileGrid->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
         m_thumbnailScheduleTimer.start();
     });
@@ -1545,9 +1616,24 @@ void MainWindow::updateCompare()
 void MainWindow::updateImageInfo()
 {
     if (!isViewerVisible() || m_currentSourceImage.isNull()) {
-        m_infoLabel->setText(m_currentFolderPath.isEmpty()
-                                 ? QString()
-                                 : QStringLiteral("%1 images").arg(m_currentImagePaths.size()));
+        if (m_currentFolderPath.isEmpty()) {
+            m_infoLabel->clear();
+            return;
+        }
+        QString text = QStringLiteral("%1 images").arg(m_currentImagePaths.size());
+        const QList<QListWidgetItem *> selected = m_fileGrid->selectedItems();
+        if (!selected.isEmpty()) {
+            qint64 bytes = 0;
+            for (const QListWidgetItem *item : selected) {
+                bytes += item->data(FileSizeRole).toLongLong();
+            }
+            text += selected.size() == 1 ? QStringLiteral("   ·   1 item selected")
+                                         : QStringLiteral("   ·   %1 items selected").arg(selected.size());
+            if (bytes > 0) {
+                text += QStringLiteral("  ") + QLocale().formattedDataSize(bytes);
+            }
+        }
+        m_infoLabel->setText(text);
         return;
     }
     QStringList parts;
@@ -1907,7 +1993,11 @@ void MainWindow::exportImageAs()
 
 void MainWindow::copyImageToClipboard()
 {
-    if (!isViewerVisible() || m_currentDisplayImage.isNull()) {
+    if (!isViewerVisible()) {
+        copySelectedFiles(false); // Ctrl+C in the file browser copies the files
+        return;
+    }
+    if (m_currentDisplayImage.isNull()) {
         copyPathToClipboard(currentPath());
         return;
     }
@@ -1950,25 +2040,407 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
     if (path.isEmpty()) {
         return;
     }
+    // Right-clicking a file that is part of the selection acts on the whole selection.
+    QStringList paths;
+    if (item) {
+        paths = item->isSelected() ? selectedPaths() : QStringList{path};
+    }
+    updateEditActions();
     QMenu menu(this);
     if (item) {
         menu.addAction(QStringLiteral("Open"), this, [this, item]() {
             handleGridItemActivated(item);
         });
         menu.addSeparator();
+        menu.addAction(m_cutAction);
+        menu.addAction(m_copyFilesAction);
+        if (item->data(IsFolderRole).toBool()) {
+            QAction *pasteInto = menu.addAction(QStringLiteral("Paste into Folder"), this, [this, path]() {
+                pasteFiles(path);
+            });
+            pasteInto->setEnabled(m_pasteAction->isEnabled());
+        }
+        menu.addSeparator();
+    } else {
+        QMenu *viewMenu = menu.addMenu(Icons::icon(Icons::Kind::ViewIcons), QStringLiteral("View"));
+        viewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
+        viewMenu->addSeparator();
+        viewMenu->addActions(m_gridViewGroup->actions().mid(4));
+        menu.addSeparator();
+        menu.addAction(m_pasteAction);
+        menu.addSeparator();
+        menu.addAction(m_selectAllAction);
+        menu.addAction(m_invertSelectionAction);
+        menu.addSeparator();
     }
-    QMenu *viewMenu = menu.addMenu(Icons::icon(Icons::Kind::ViewIcons), QStringLiteral("View"));
-    viewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
-    viewMenu->addSeparator();
-    viewMenu->addActions(m_gridViewGroup->actions().mid(4));
-    menu.addSeparator();
-    menu.addAction(QStringLiteral("Copy Path"), this, [this, path]() {
-        copyPathToClipboard(path);
+    menu.addAction(paths.size() > 1 ? QStringLiteral("Copy Paths") : QStringLiteral("Copy Path"), this, [this, path, paths]() {
+        copyPathToClipboard(paths.size() > 1 ? paths.join(QLatin1Char('\n')) : path);
     });
     menu.addAction(m_showInExplorerAction->text(), this, [this, path]() {
         showInExplorer(path);
     });
     menu.exec(m_fileGrid->viewport()->mapToGlobal(pos));
+}
+
+// Shift-selection the way Explorer does it: Shift+click and Shift+arrows select the run of files
+// from the anchor (the last file clicked or moved to without Shift) to here, in list order, and
+// drop the rest of the selection; with Ctrl as well, the run is added to it. Qt on its own keeps
+// earlier Ctrl+clicked files and, in the icon views, selects a rectangle instead of a run.
+bool MainWindow::handleGridSelectionEvent(QObject *watched, QEvent *event)
+{
+    QItemSelectionModel *selection = m_fileGrid->selectionModel();
+    auto selectRun = [this, selection](const QModelIndex &to, bool add) {
+        QModelIndex from = m_selectionAnchor;
+        if (!from.isValid()) {
+            from = to;
+        }
+        const QModelIndex first = from.row() <= to.row() ? from : to;
+        const QModelIndex last = from.row() <= to.row() ? to : from;
+        const QItemSelection run(first, last);
+        if (add) {
+            selection->select(run, QItemSelectionModel::Select);
+        } else {
+            selection->select(run, QItemSelectionModel::ClearAndSelect);
+        }
+    };
+
+    // The view never saw the Shift+press, so keep the drag and release that follow from it too
+    // (it would start a box selection from an old position).
+    if (m_shiftPressTaken && watched == m_fileGrid->viewport()
+        && (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonRelease)) {
+        if (event->type() == QEvent::MouseButtonRelease) {
+            m_shiftPressTaken = false;
+        }
+        return true;
+    }
+
+    if (watched == m_fileGrid->viewport() && event->type() == QEvent::MouseButtonPress) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() != Qt::LeftButton || !mouse->modifiers().testFlag(Qt::ShiftModifier)) {
+            return false; // Qt handles it; the anchor follows the current item
+        }
+        const QModelIndex index = m_fileGrid->indexAt(mouse->position().toPoint());
+        if (!index.isValid()) {
+            return false;
+        }
+        m_shiftSelecting = true;
+        selection->setCurrentIndex(index, QItemSelectionModel::NoUpdate);
+        selectRun(index, mouse->modifiers().testFlag(Qt::ControlModifier));
+        m_shiftSelecting = false;
+        m_shiftPressTaken = true;
+        m_fileGrid->setFocus(Qt::MouseFocusReason);
+        return true;
+    }
+
+    if (watched == m_fileGrid && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (!key->modifiers().testFlag(Qt::ShiftModifier)) {
+            return false;
+        }
+        switch (key->key()) {
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+        case Qt::Key_Home:
+        case Qt::Key_End:
+        case Qt::Key_PageUp:
+        case Qt::Key_PageDown:
+            break;
+        default:
+            return false;
+        }
+        if (!m_selectionAnchor.isValid()) {
+            m_selectionAnchor = m_fileGrid->currentIndex();
+        }
+        // Let the view move the current item, then put the run in place of Qt's selection.
+        m_shiftSelecting = true;
+        QCoreApplication::sendEvent(m_fileGrid, event);
+        const QModelIndex current = m_fileGrid->currentIndex();
+        if (current.isValid()) {
+            selectRun(current, key->modifiers().testFlag(Qt::ControlModifier));
+        }
+        m_shiftSelecting = false;
+        return true;
+    }
+    return false;
+}
+
+QStringList MainWindow::selectedPaths() const
+{
+    // In grid order, not in the order they were clicked.
+    QStringList paths;
+    for (int row = 0; row < m_fileGrid->count(); ++row) {
+        const QListWidgetItem *item = m_fileGrid->item(row);
+        if (item->isSelected()) {
+            paths.append(item->data(FilePathRole).toString());
+        }
+    }
+    return paths;
+}
+
+void MainWindow::copySelectedFiles(bool cut)
+{
+    if (isViewerVisible()) {
+        if (cut) {
+            return;
+        }
+        copyImageToClipboard();
+        return;
+    }
+    const QStringList paths = selectedPaths();
+    if (paths.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Select files to %1 first").arg(cut ? QStringLiteral("cut") : QStringLiteral("copy")), 3000);
+        return;
+    }
+    QApplication::clipboard()->setMimeData(FileOps::makeMimeData(paths, cut));
+    const QString what = paths.size() == 1 ? QFileInfo(paths.first()).fileName() : QStringLiteral("%1 items").arg(paths.size());
+    statusBar()->showMessage(cut ? QStringLiteral("Cut %1: paste to move").arg(what) : QStringLiteral("Copied %1").arg(what), 4000);
+    updateEditActions();
+}
+
+void MainWindow::updateEditActions()
+{
+    if (!m_fileGrid || !m_cutAction) {
+        return;
+    }
+    const bool grid = !isViewerVisible();
+    QStringList paths;
+    bool cut = false;
+    const bool canPaste = FileOps::readMimeData(QApplication::clipboard()->mimeData(), &paths, &cut);
+    const bool hasSelection = grid && !m_fileGrid->selectedItems().isEmpty();
+    m_cutAction->setEnabled(hasSelection);
+    m_copyFilesAction->setEnabled(hasSelection);
+    m_pasteAction->setEnabled(grid && canPaste && !m_currentFolderPath.isEmpty() && !m_fileJob);
+    m_selectAllAction->setEnabled(grid);
+    m_invertSelectionAction->setEnabled(grid);
+    m_copyImageAction->setText(grid ? QStringLiteral("Copy") : QStringLiteral("Copy Image"));
+    m_copyImageAction->setEnabled(!grid || hasSelection);
+}
+
+// Pastes the files on the clipboard into targetFolder: copies them, or moves them when they were
+// cut (here or in Explorer). Runs in the background with a progress dialog.
+void MainWindow::pasteFiles(const QString &targetFolder)
+{
+    if (targetFolder.isEmpty()) {
+        return;
+    }
+    if (m_fileJob) {
+        statusBar()->showMessage(QStringLiteral("Still busy with the last paste"), 3000);
+        return;
+    }
+    QStringList sources;
+    bool move = false;
+    if (!FileOps::readMimeData(QApplication::clipboard()->mimeData(), &sources, &move)) {
+        statusBar()->showMessage(QStringLiteral("There are no files on the clipboard to paste"), 3000);
+        return;
+    }
+
+    const QDir target(targetFolder);
+    QList<FileOps::Item> items;
+    QList<int> conflicts;
+    QStringList problems;
+    for (const QString &source : sources) {
+        const QFileInfo info(source);
+        if (!info.exists()) {
+            problems.append(QStringLiteral("%1 no longer exists").arg(QDir::toNativeSeparators(source)));
+            continue;
+        }
+        const bool isDir = info.isDir();
+        const bool sameFolder = FileOps::isSameOrInside(info.absolutePath(), targetFolder)
+                                && FileOps::isSameOrInside(targetFolder, info.absolutePath());
+        if (isDir && FileOps::isSameOrInside(targetFolder, source)) {
+            problems.append(QStringLiteral("%1 can't go inside itself").arg(info.fileName()));
+            continue;
+        }
+        FileOps::Item item;
+        item.source = info.absoluteFilePath();
+        if (sameFolder) {
+            if (move) {
+                continue; // cut and pasted where it already is: nothing to do
+            }
+            item.target = target.filePath(FileOps::copyName(targetFolder, info.fileName(), isDir));
+        } else {
+            item.target = target.filePath(info.fileName());
+            if (QFileInfo::exists(item.target)) {
+                conflicts.append(items.size());
+            }
+        }
+        items.append(item);
+    }
+
+    if (!conflicts.isEmpty()) {
+        QStringList names;
+        for (int index : conflicts) {
+            if (names.size() == 10) {
+                names.append(QStringLiteral("…"));
+                break;
+            }
+            names.append(QFileInfo(items.at(index).target).fileName());
+        }
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(move ? QStringLiteral("Move") : QStringLiteral("Paste"));
+        box.setText(conflicts.size() == 1
+                        ? QStringLiteral("%1 already exists in %2.").arg(names.first(), QDir::toNativeSeparators(targetFolder))
+                        : QStringLiteral("%1 items already exist in %2.").arg(conflicts.size()).arg(QDir::toNativeSeparators(targetFolder)));
+        box.setInformativeText(QStringLiteral("Replace them, skip them, or keep both (the pasted ones get a number)?\n"
+                                              "Folders with the same name are merged.\n\n")
+                               + names.join(QLatin1Char('\n')));
+        QPushButton *replace = box.addButton(QStringLiteral("Replace"), QMessageBox::AcceptRole);
+        QPushButton *skip = box.addButton(QStringLiteral("Skip"), QMessageBox::AcceptRole);
+        QPushButton *keepBoth = box.addButton(QStringLiteral("Keep Both"), QMessageBox::AcceptRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(skip);
+        box.exec();
+        if (box.clickedButton() == replace) {
+            for (int index : conflicts) {
+                items[index].replace = true;
+            }
+        } else if (box.clickedButton() == keepBoth) {
+            for (int index : conflicts) {
+                const QFileInfo info(items.at(index).source);
+                items[index].target = target.filePath(FileOps::keepBothName(targetFolder, info.fileName(), info.isDir()));
+            }
+        } else if (box.clickedButton() == skip) {
+            for (int i = conflicts.size() - 1; i >= 0; --i) {
+                items.removeAt(conflicts.at(i));
+            }
+        } else {
+            return;
+        }
+    }
+
+    if (!problems.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Paste"), problems.join(QLatin1Char('\n')));
+    }
+    if (items.isEmpty()) {
+        return;
+    }
+
+    m_fileJobTarget = targetFolder;
+    m_fileJobSourceFolders.clear();
+    for (const FileOps::Item &item : items) {
+        m_fileJobSourceFolders.append(QFileInfo(item.source).absolutePath());
+    }
+    m_fileJob = new FileOps::Job(items, move, this);
+    connect(m_fileJob, &FileOps::Job::finished, this, &MainWindow::finishFileJob);
+
+    const QString verb = move ? QStringLiteral("Moving") : QStringLiteral("Copying");
+    m_fileJobProgress = new QProgressDialog(this);
+    m_fileJobProgress->setWindowTitle(move ? QStringLiteral("Move") : QStringLiteral("Copy"));
+    m_fileJobProgress->setLabelText(QStringLiteral("%1 to %2…").arg(verb, QDir::toNativeSeparators(targetFolder)));
+    m_fileJobProgress->setRange(0, 0);
+    m_fileJobProgress->setMinimumDuration(400);
+    m_fileJobProgress->setAutoClose(false);
+    m_fileJobProgress->setAutoReset(false);
+    m_fileJobProgress->setMinimumWidth(460);
+    connect(m_fileJobProgress, &QProgressDialog::canceled, m_fileJob, &FileOps::Job::cancel);
+
+    m_fileJobTimer.setInterval(100);
+    disconnect(&m_fileJobTimer, nullptr, this, nullptr);
+    connect(&m_fileJobTimer, &QTimer::timeout, this, [this, verb, targetFolder]() {
+        if (!m_fileJob || !m_fileJobProgress) {
+            return;
+        }
+        const QLocale locale;
+        if (m_fileJob->counting()) {
+            m_fileJobProgress->setLabelText(QStringLiteral("Counting files… %1").arg(m_fileJob->totalFiles()));
+            return;
+        }
+        const qint64 total = qMax<qint64>(1, m_fileJob->totalBytes());
+        m_fileJobProgress->setRange(0, 1000);
+        m_fileJobProgress->setValue(int(qMin<qint64>(1000, m_fileJob->doneBytes() * 1000 / total)));
+        m_fileJobProgress->setLabelText(QStringLiteral("%1 %2 of %3 files (%4 of %5)\nto %6")
+                                            .arg(verb)
+                                            .arg(qMin(m_fileJob->doneFiles() + 1, m_fileJob->totalFiles()))
+                                            .arg(m_fileJob->totalFiles())
+                                            .arg(locale.formattedDataSize(m_fileJob->doneBytes()),
+                                                 locale.formattedDataSize(m_fileJob->totalBytes()),
+                                                 QDir::toNativeSeparators(targetFolder)));
+    });
+    m_fileJobTimer.start();
+    updateEditActions();
+    m_fileJob->start();
+}
+
+void MainWindow::finishFileJob()
+{
+    m_fileJobTimer.stop();
+    FileOps::Job *job = m_fileJob;
+    m_fileJob = nullptr;
+    if (m_fileJobProgress) {
+        m_fileJobProgress->deleteLater();
+        m_fileJobProgress = nullptr;
+    }
+    if (!job) {
+        return;
+    }
+    const QStringList created = job->created();
+    const QStringList errors = job->errors();
+    const bool canceled = job->isCanceled();
+    const bool move = job->move();
+    job->deleteLater();
+
+    // Explorer empties the clipboard once cut files have been moved.
+    if (move && !canceled && errors.isEmpty()) {
+        QApplication::clipboard()->clear();
+    }
+
+    // Show the result: refresh the folder on screen if files went into or out of it.
+    const QString current = QDir::cleanPath(m_currentFolderPath);
+    auto same = [](const QString &a, const QString &b) {
+        return FileOps::isSameOrInside(a, b) && FileOps::isSameOrInside(b, a);
+    };
+    bool touched = same(current, m_fileJobTarget);
+    for (const QString &folder : m_fileJobSourceFolders) {
+        touched = touched || (move && same(current, folder));
+    }
+    if (touched && !isViewerVisible()) {
+        const int scroll = m_fileGrid->verticalScrollBar()->value();
+        populateFileGrid(m_currentFolderPath, false);
+        m_fileGrid->verticalScrollBar()->setValue(scroll);
+        if (same(current, m_fileJobTarget)) {
+            QListWidgetItem *first = nullptr;
+            for (int row = 0; row < m_fileGrid->count(); ++row) {
+                QListWidgetItem *item = m_fileGrid->item(row);
+                const QString path = item->data(FilePathRole).toString();
+                for (const QString &made : created) {
+                    if (same(path, made)) {
+                        if (!first) {
+                            first = item;
+                            m_fileGrid->setCurrentItem(item, QItemSelectionModel::ClearAndSelect);
+                        } else {
+                            item->setSelected(true);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (first) {
+                m_fileGrid->scrollToItem(first);
+            }
+        }
+    }
+
+    const QString verb = move ? QStringLiteral("Moved") : QStringLiteral("Pasted");
+    if (canceled) {
+        statusBar()->showMessage(QStringLiteral("Canceled"), 4000);
+    } else {
+        statusBar()->showMessage(created.size() == 1 ? QStringLiteral("%1 %2").arg(verb, QFileInfo(created.first()).fileName())
+                                                     : QStringLiteral("%1 %2 items").arg(verb).arg(created.size()),
+                                 4000);
+    }
+    if (!errors.isEmpty()) {
+        QStringList shown = errors.mid(0, 15);
+        if (errors.size() > shown.size()) {
+            shown.append(QStringLiteral("…and %1 more").arg(errors.size() - shown.size()));
+        }
+        QMessageBox::warning(this, move ? QStringLiteral("Move") : QStringLiteral("Paste"),
+                             QStringLiteral("Some files could not be %1:\n\n%2")
+                                 .arg(move ? QStringLiteral("moved") : QStringLiteral("copied"), shown.join(QLatin1Char('\n'))));
+    }
+    updateEditActions();
 }
 
 void MainWindow::setViewTransform(ColorTransform::View view)
@@ -2286,6 +2758,7 @@ void MainWindow::applyGridView()
     }
     m_fileGrid->setResizeMode(QListView::Adjust);
     m_fileGrid->setUniformItemSizes(true);
+    m_fileGrid->setSelectionRectVisible(true); // ListMode turns the box off by default
     m_fileGrid->doItemsLayout();
     m_fileGrid->viewport()->update();
     m_detailsHeader->setOffset(m_fileGrid->horizontalScrollBar()->value() - m_fileGrid->frameWidth());
@@ -2480,6 +2953,7 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         item->setData(FileItemDelegate::ModifiedTextRole, locale.toString(fileInfo.lastModified(), QLocale::ShortFormat));
         item->setData(FileItemDelegate::TypeTextRole, fileTypeText(fileInfo, image));
         item->setData(FileItemDelegate::SizeTextRole, fileSizeText(locale, fileInfo.size()));
+        item->setData(FileSizeRole, fileInfo.size());
         item->setToolTip(filePath);
 
         if (image) {
