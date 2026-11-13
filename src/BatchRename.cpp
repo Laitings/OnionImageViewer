@@ -72,6 +72,22 @@ QString changeCase(const QString &text, CaseChange change)
     return text;
 }
 
+QString removeRange(const QString &text, const Options &options)
+{
+    const qsizetype size = text.size();
+    qsizetype first = qMin(options.removeFrom, options.removeTo);
+    qsizetype last = qMax(options.removeFrom, options.removeTo);
+    if (first < 1 || first > size) {
+        return text;
+    }
+    last = qMin(last, size);
+    // Positions are 1-based; from the end, position 1 is the last character.
+    const qsizetype start = options.removeFromEnd ? size - last : first - 1;
+    QString result = text;
+    result.remove(start, last - first + 1);
+    return result;
+}
+
 struct Context
 {
     QString name;
@@ -300,6 +316,9 @@ QList<Result> plan(const QList<Source> &sources, const Options &options, const Q
         QString stem;
         if (error.isEmpty()) {
             stem = expand(options.pattern, context, options, &error);
+        }
+        if (error.isEmpty() && options.removeEnabled) {
+            stem = removeRange(stem, options);
         }
         if (error.isEmpty() && !options.find.isEmpty()) {
             if (options.regex) {
