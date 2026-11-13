@@ -138,6 +138,8 @@ private:
     void exportImageAs();
     void copyPathToClipboard(const QString &path);
     void showInExplorer(const QString &path);
+    // Adds "Pin to Quick access" or "Unpin from Quick access" for a folder to a context menu.
+    void addPinAction(QMenu *menu, const QString &folderPath);
     void showGridContextMenu(const QPoint &pos);
 
     // File browser selection and the file clipboard (copy, cut and paste, also with Explorer).

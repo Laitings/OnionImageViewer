@@ -97,6 +97,9 @@ namespace {
 const QString SettingsMainWindowGeometry = QStringLiteral("mainWindow/geometry");
 const QString SettingsMainWindowState = QStringLiteral("mainWindow/state");
 const QString SettingsFoldersVisible = QStringLiteral("folders/visible");
+const QString SettingsPinnedFolders = QStringLiteral("folders/pinned");
+const QString SettingsQuickAccessExpanded = QStringLiteral("folders/quickAccessExpanded");
+const QString SettingsThisPcExpanded = QStringLiteral("folders/thisPcExpanded");
 const QString SettingsViewTransform = QStringLiteral("view/colorTransform");
 const QString SettingsInput = QStringLiteral("view/input");
 const QString SettingsLutFile = QStringLiteral("view/lutFile");
@@ -1174,6 +1177,9 @@ void MainWindow::createCentralLayout()
     connect(m_imageViewport, &QWidget::customContextMenuRequested, this, &MainWindow::showViewerContextMenu);
 
     connect(m_folderTreePanel, &FolderTreePanel::folderSelected, this, &MainWindow::handleFolderSelected);
+    connect(m_folderTreePanel, &FolderTreePanel::pinnedFoldersChanged, this, [](const QStringList &folders) {
+        QSettings().setValue(SettingsPinnedFolders, folders); // saved right away, not only on exit
+    });
     connect(m_fileGrid, &QListWidget::itemDoubleClicked, this, &MainWindow::handleGridItemActivated);
     connect(m_fileGrid, &QListWidget::currentItemChanged, this, &MainWindow::scheduleMetadata);
     connect(m_fileGrid, &QListWidget::itemSelectionChanged, this, &MainWindow::updateImageInfo);
@@ -1240,6 +1246,13 @@ void MainWindow::loadSettings()
         m_splitter->restoreState(splitterState);
     }
 
+    // Until the user pins or unpins something, Quick access shows Explorer's usual folders.
+    m_folderTreePanel->setPinnedFolders(settings.contains(SettingsPinnedFolders)
+                                            ? settings.value(SettingsPinnedFolders).toStringList()
+                                            : FolderTreePanel::defaultPinnedFolders());
+    m_folderTreePanel->setQuickAccessExpanded(settings.value(SettingsQuickAccessExpanded, true).toBool());
+    m_folderTreePanel->setThisPcExpanded(settings.value(SettingsThisPcExpanded, true).toBool());
+
     const bool foldersVisible = settings.value(SettingsFoldersVisible, false).toBool();
     m_toggleFoldersAction->setChecked(foldersVisible);
     setFolderPanelVisible(foldersVisible);
@@ -1280,6 +1293,8 @@ void MainWindow::saveSettings()
     settings.setValue(SettingsMainWindowGeometry, saveGeometry());
     settings.setValue(SettingsMainWindowState, saveState());
     settings.setValue(SettingsFoldersVisible, m_folderTreePanel->isVisible());
+    settings.setValue(SettingsQuickAccessExpanded, m_folderTreePanel->isQuickAccessExpanded());
+    settings.setValue(SettingsThisPcExpanded, m_folderTreePanel->isThisPcExpanded());
     settings.setValue(SettingsSplitterState, m_splitter->saveState());
     settings.setValue(SettingsDetailsColumns, m_detailsHeader->saveState());
 }
@@ -2051,6 +2066,22 @@ void MainWindow::showInExplorer(const QString &path)
     QDesktopServices::openUrl(QUrl::fromLocalFile(info.isDir() ? info.absoluteFilePath() : info.absolutePath()));
 }
 
+void MainWindow::addPinAction(QMenu *menu, const QString &folderPath)
+{
+    if (folderPath.isEmpty()) {
+        return;
+    }
+    if (m_folderTreePanel->isPinned(folderPath)) {
+        menu->addAction(Icons::icon(Icons::Kind::Unpin), QStringLiteral("Unpin from Quick access"), this, [this, folderPath]() {
+            m_folderTreePanel->unpinFolder(folderPath);
+        });
+    } else {
+        menu->addAction(Icons::icon(Icons::Kind::Pin), QStringLiteral("Pin to Quick access"), this, [this, folderPath]() {
+            m_folderTreePanel->pinFolder(folderPath);
+        });
+    }
+}
+
 void MainWindow::showGridContextMenu(const QPoint &pos)
 {
     QListWidgetItem *item = m_fileGrid->itemAt(pos);
@@ -2077,6 +2108,7 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
                 pasteFiles(path);
             });
             pasteInto->setEnabled(m_pasteAction->isEnabled());
+            addPinAction(&menu, path);
         }
         menu.addSeparator();
     } else {
@@ -2089,6 +2121,8 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
         menu.addSeparator();
         menu.addAction(m_selectAllAction);
         menu.addAction(m_invertSelectionAction);
+        menu.addSeparator();
+        addPinAction(&menu, m_currentFolderPath);
         menu.addSeparator();
     }
     menu.addAction(paths.size() > 1 ? QStringLiteral("Copy Paths") : QStringLiteral("Copy Path"), this, [this, path, paths]() {

@@ -6,6 +6,9 @@
 #include <QPainterPath>
 #include <QPalette>
 #include <QPixmap>
+#include <QtMath>
+
+#include <cmath>
 
 namespace Icons {
 namespace {
@@ -175,6 +178,49 @@ private:
                 p->drawLine(QPointF(14, y + 2), QPointF(20, y + 2));
                 p->drawLine(QPointF(14, y + 5), QPointF(18, y + 5));
             }
+            break;
+        case Kind::QuickAccess: {
+            QPainterPath star;
+            for (int i = 0; i < 10; ++i) {
+                const qreal radius = (i % 2 == 0) ? 8.6 : 3.7;
+                const qreal angle = -M_PI / 2 + i * M_PI / 5;
+                const QPointF point(12 + radius * std::cos(angle), 12.8 + radius * std::sin(angle));
+                if (i == 0) {
+                    star.moveTo(point);
+                } else {
+                    star.lineTo(point);
+                }
+            }
+            star.closeSubpath();
+            QColor fill = color;
+            fill.setAlphaF(color.alphaF() * 0.35);
+            p->setBrush(fill);
+            p->drawPath(star);
+            break;
+        }
+        case Kind::ThisPC:
+            p->drawRoundedRect(QRectF(3.5, 4.5, 17, 11.5), 1.8, 1.8);
+            p->drawLine(QPointF(12, 16), QPointF(12, 19.5));
+            p->drawLine(QPointF(8.5, 19.5), QPointF(15.5, 19.5));
+            break;
+        case Kind::Pin:
+        case Kind::Unpin:
+            // A push pin, upright; Unpin crosses it out.
+            path.moveTo(8.5, 4);
+            path.lineTo(15.5, 4);
+            path.moveTo(10, 4);
+            path.lineTo(10, 9.5);
+            path.lineTo(7, 13.5);
+            path.lineTo(17, 13.5);
+            path.lineTo(14, 9.5);
+            path.lineTo(14, 4);
+            path.moveTo(12, 13.5);
+            path.lineTo(12, 20.5);
+            if (m_kind == Kind::Unpin) {
+                path.moveTo(4.5, 4.5);
+                path.lineTo(19.5, 19.5);
+            }
+            p->drawPath(path);
             break;
         }
     }
