@@ -90,7 +90,7 @@ running the app on real files.
   thumbnails through `loadThumbnailImage` (so it shares the thumbnail cache and never reads
   OneDrive files). `MainWindow` routes viewer keys to the active pane (`handleViewerKey` →
   `SplitPane::handleKey`), and viewer actions that zoom should act on `activeViewport()` and then
-  call `syncSplitViews()`. New display aids (like channels and clipping) should be applied to both
+  call `syncSplitViews()`. `currentPath()` (metadata, Copy Path) and `updateScopes()` read the active pane. New display aids (like channels and clipping) should be applied to both
   viewports.
 - The batch renamer is split in two: `BatchRename::` (`src/BatchRename.*`) plans the names and
   carries out renames with no UI, and `BatchRenameDialog` only shows the options and preview.
