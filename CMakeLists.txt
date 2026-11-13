@@ -88,6 +88,24 @@ qt_add_resources(OnionImageViewer "app_icons"
         resources/icons/OnionImageViewer.png
         resources/icons/OnionImageViewer.svg
 )
+# The version the app shows (About box, the .exe's file properties). The release workflow passes the
+# GitHub release tag (-DONION_VERSION=1.2.0); otherwise it is the project VERSION above.
+set(ONION_VERSION "" CACHE STRING "Version shown by the app (default: the project VERSION)")
+if(ONION_VERSION)
+    string(REGEX REPLACE "^[vV]" "" ONION_VERSION_STRING "${ONION_VERSION}")
+else()
+    set(ONION_VERSION_STRING "${PROJECT_VERSION}")
+endif()
+# Windows wants four plain numbers: 1.2.0-beta becomes 1,2,0,0.
+string(REGEX MATCH "^[0-9]+(\\.[0-9]+)*" ONION_VERSION_NUMBERS "${ONION_VERSION_STRING}")
+string(REPLACE "." ";" ONION_VERSION_PARTS "${ONION_VERSION_NUMBERS}")
+list(APPEND ONION_VERSION_PARTS 0 0 0 0)
+list(SUBLIST ONION_VERSION_PARTS 0 4 ONION_VERSION_PARTS)
+list(JOIN ONION_VERSION_PARTS "," ONION_VERSION_COMMAS)
+message(STATUS "OnionImageViewer version: ${ONION_VERSION_STRING} (${ONION_VERSION_COMMAS})")
+configure_file(src/Version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/Version.h" @ONLY)
+target_include_directories(OnionImageViewer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 if(WIN32)
     target_sources(OnionImageViewer PRIVATE resources/OnionImageViewer.rc)
 endif()

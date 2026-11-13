@@ -79,7 +79,7 @@ Write-Host "Version: $version"
 # --- Build --------------------------------------------------------------------------------------
 if (-not $SkipBuild) {
     Step "Configuring ($BuildDir)"
-    $configure = @("-S", $repo, "-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_PREFIX_PATH=$QtDir")
+    $configure = @("-S", $repo, "-B", $BuildDir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_PREFIX_PATH=$QtDir", "-DONION_VERSION=$version")
     if ($ArriLutDir) {
         if (-not (Test-Path $ArriLutDir)) { Fail "ARRI LUT folder $ArriLutDir not found." }
         $configure += "-DONION_ARRI_LUT_DIR=$($ArriLutDir -replace '\\','/')"

@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Version.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -11,6 +12,7 @@ int main(int argc, char *argv[])
 
     QCoreApplication::setOrganizationName(QStringLiteral("OnionImageViewer"));
     QCoreApplication::setApplicationName(QStringLiteral("OnionImageViewer"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(ONION_VERSION_STRING));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")));
 
     MainWindow window;
