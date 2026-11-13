@@ -50,6 +50,8 @@ qt_add_executable(OnionImageViewer
     src/DpxReader.cpp
     src/ExrReader.h
     src/ExrReader.cpp
+    src/PsdReader.h
+    src/PsdReader.cpp
     src/ColorTransform.h
     src/ColorTransform.cpp
     src/Metadata.h
