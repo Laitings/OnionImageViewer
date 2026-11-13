@@ -18,6 +18,7 @@ the full file metadata, and export what you see with the view burned in.
 - **Color views** (Color menu): None, Auto, ARRI LogC3 → Rec.709 and LogC4 → Rec.709 (built-in approximations, or ARRI's own `.cube` LUTs when they are found in `luts/` next to the .exe), and any `.cube` LUT you load. EXR input can be set to ACES2065-1 or ACEScg for ACES comps.
 - **File browser**: folder panel laid out like Explorer's navigation pane, with Quick access (pinned folders: pin and unpin from the right-click menus, drag to reorder; starts with OneDrive, Desktop, Downloads, Documents and Pictures) above This PC's drive tree, breadcrumb path bar, icon / list / details / tiles views, Windows shell thumbnails (no full downloads from OneDrive), Explorer-style multi-select and copy / cut / paste that works together with Explorer.
 - **Viewer**: zoom and pan, channel isolation (R, G, B, A, luma), clipping overlay, compare wipe against a pinned image, sequence playback with read-ahead, full screen.
+- **Scopes** (S in the viewer, Ctrl+Shift+H anywhere): a histogram (RGB or luma) and a waveform (luma, RGB parade or RGB overlay) of the viewed image in a dockable panel, with the hovered pixel marked on both. By default they read the picture as displayed, with the color view or LUT applied, matching the pixel readout's display values (0–100 scale). **Stored values** reads the file's own values instead: scene-linear float images (EXR, ACES) get a scale in stops with 18% grey marked, other float images extend above 1 when they go there. Computed on a background thread from a downsampled image, and only while the panel is open.
 - **Metadata panel** (Ctrl+I): every EXR attribute, the full DPX header, HEIF details with the Exif data (camera, lens, exposure, date, GPS), or what Qt reports, with a filter.
 - **Export As** (Ctrl+Shift+S): save the picture as shown, with the color view or LUT burned in. For an animated GIF, this saves the frame shown when you open the export dialog.
 - **Batch Convert**: select images in the file grid and choose File → Batch Convert or use the right-click menu. Pick an output folder and format (PNG, JPEG, TIFF, WebP or BMP, depending on installed Qt plugins). JPEG and WebP offer a quality setting. Keep the original size or set an output width and height and choose center crop, scale with crop, fit with black padding, or stretch. Conversion uses the default display rendering without the active color view or LUT, and uses the first frame of animated images. Existing files are kept by numbering new outputs when names collide.
@@ -76,7 +77,7 @@ Notes:
 - vcpkg is picked up automatically from `VCPKG_ROOT`, or else from Visual Studio (`%VSINSTALLDIR%\VC\vcpkg`). It has to be set up when the build folder is first configured; a build folder made without it must be deleted and configured again.
 - ARRI's LogC3/LogC4 → Rec.709 `.cube` files from `resources/luts/arri` are copied into `luts/` next to the .exe, where the ARRI views use them instead of the built-in curves. `-DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri` takes them from another folder.
 - `-DONION_VERSION=1.2.0` sets the version the app shows (default: the CMake project version).
-- Settings (view mode, color view, recent files, folders, pinned folders) are kept with `QSettings` under `OnionImageViewer` in the registry.
+- Settings (view mode, color view, recent files, folders, pinned folders, scope choices) are kept with `QSettings` under `OnionImageViewer` in the registry.
 
 ## Windows installer
 
@@ -132,6 +133,8 @@ src/
   ColorTransform.*        display transforms: LogC3/LogC4 → Rec.709, .cube LUTs, ACES input
   Metadata.*              header-only metadata for the metadata panel
   MetadataPanel.*         the metadata side panel
+  Scopes.*                histogram and waveform computation (runs on a background thread)
+  ScopesPanel.*           the scopes side panel: drawing, source choice, hovered-pixel marks
 ```
 
 Readers return images with their stored values (DPX as 16-bit code values, EXR as half floats);

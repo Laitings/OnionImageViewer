@@ -15,6 +15,7 @@
 #include "ImageViewport.h"
 #include "Metadata.h"
 #include "MetadataPanel.h"
+#include "ScopesPanel.h"
 #include "OverlayButton.h"
 #include "PathBar.h"
 #include "UpdateChecker.h"
@@ -1038,6 +1039,24 @@ void MainWindow::createActions()
         QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     });
     m_metadataPool.setMaxThreadCount(1);
+
+    // Scopes: histogram and waveform of the viewed image, another dock on the right.
+    m_scopesPanel = new ScopesPanel(this);
+    m_scopesDock = new QDockWidget(QStringLiteral("Scopes"), this);
+    m_scopesDock->setObjectName(QStringLiteral("ScopesDock"));
+    m_scopesDock->setWidget(m_scopesPanel);
+    m_scopesDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    m_scopesDock->setMinimumWidth(300);
+    addDockWidget(Qt::RightDockWidgetArea, m_scopesDock);
+    m_scopesDock->hide();
+    m_scopesAction = m_scopesDock->toggleViewAction();
+    m_scopesAction->setText(QStringLiteral("Scopes"));
+    m_scopesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_H));
+    m_scopesAction->setToolTip(QStringLiteral("Histogram and waveform of the image (S or Ctrl+Shift+H)"));
+    addAction(m_scopesAction);
+    connect(m_scopesDock, &QDockWidget::visibilityChanged, this, [this]() {
+        QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
+    });
     m_metadataTimer.setSingleShot(true);
     m_metadataTimer.setInterval(120); // while scrubbing or playing, wait until it settles
     connect(&m_metadataTimer, &QTimer::timeout, this, &MainWindow::loadMetadata);
@@ -1096,6 +1115,7 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_clippingAction);
     viewMenu->addAction(m_fullScreenAction);
     viewMenu->addAction(m_metadataAction);
+    viewMenu->addAction(m_scopesAction);
     viewMenu->addSeparator();
     viewMenu->addAction(QStringLiteral("Edit Path (Alt+D)"), this, [this]() {
         m_pathBar->startEditing();
@@ -1113,6 +1133,7 @@ void MainWindow::createMenus()
             "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
             "  C  show clipping\n"
             "  I  metadata panel (Ctrl+I anywhere)\n"
+            "  S  scopes: histogram and waveform (Ctrl+Shift+H anywhere)\n"
             "  Ctrl+C  copy the picture,  Ctrl+Shift+S  export it with the LUT burned in\n"
             "  Esc  leave full screen, then back to the grid\n\n"
             "Color:\n"
@@ -1744,6 +1765,7 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     }
     updateColorButton(m_view);
     updateImageInfo();
+    updateScopes();
     updatePixelReadout(m_hoveredPixel);
     if (requested && QFileInfo(frame.path).suffix().compare(QLatin1String("gif"), Qt::CaseInsensitive) == 0) {
         m_frameLoader->startGif(frame.path);
@@ -1758,6 +1780,7 @@ void MainWindow::showGifFrame(const QImage &source, const QImage &display)
     if (m_compareMode == CompareNoView) {
         updateCompare();
     }
+    updateScopes();
     updatePixelReadout(m_hoveredPixel);
 }
 
@@ -1886,6 +1909,11 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
             m_metadataAction->trigger();
         }
         return true;
+    case Qt::Key_S:
+        if (!event->isAutoRepeat()) {
+            m_scopesAction->trigger();
+        }
+        return true;
     default:
         return false;
     }
@@ -1900,9 +1928,25 @@ void MainWindow::refreshCurrentDisplay()
         m_imageViewport->setImage(m_currentDisplayImage, true);
         updateCompare();
         updateImageInfo();
+        updateScopes();
         updatePixelReadout(m_hoveredPixel);
     }
     updateColorButton(m_view);
+}
+
+// Hands the viewed image to the scopes panel (which only computes while it is shown).
+void MainWindow::updateScopes()
+{
+    if (!isViewerVisible() || m_currentSourceImage.isNull()) {
+        m_scopesPanel->clear();
+        return;
+    }
+    const ColorTransform::View shown = ColorTransform::resolveView(m_view, m_currentSourceImage);
+    QString viewName = ColorTransform::displayName(shown);
+    if (shown == ColorTransform::View::CustomLut && ColorTransform::hasLut()) {
+        viewName = QFileInfo(ColorTransform::lutFilePath()).fileName();
+    }
+    m_scopesPanel->setImages(m_currentSourceImage, m_currentDisplayImage, m_input, viewName);
 }
 
 void MainWindow::setCompareMode(CompareMode mode)
@@ -1999,6 +2043,7 @@ void MainWindow::updateImageInfo()
 void MainWindow::updatePixelReadout(const QPoint &pixel)
 {
     m_hoveredPixel = pixel;
+    m_scopesPanel->setHoveredPixel(isViewerVisible() ? pixel : QPoint(-1, -1));
     if (!isViewerVisible() || pixel.x() < 0 || m_currentSourceImage.isNull()
         || !m_currentDisplayImage.rect().contains(pixel)) {
         m_pixelLabel->clear();
@@ -2154,7 +2199,7 @@ void MainWindow::setFullScreenMode(bool on)
     if (on) {
         m_wasMaximized = isMaximized();
         m_hiddenForFullScreen.clear();
-        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel, m_metadataDock};
+        QList<QWidget *> chrome = {menuBar(), statusBar(), m_pathBar, m_folderTreePanel, m_metadataDock, m_scopesDock};
         for (QToolBar *toolbar : findChildren<QToolBar *>()) {
             chrome.append(toolbar);
         }
@@ -3613,6 +3658,7 @@ void MainWindow::showGrid()
     m_contentStack->setCurrentWidget(m_fileGrid);
     m_pixelLabel->clear();
     m_swatchLabel->hide();
+    m_scopesPanel->clear();
     scheduleMetadata();
     updateImageInfo();
     updateColorButton(m_view);

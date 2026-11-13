@@ -73,7 +73,12 @@ running the app on real files.
   `src/MainWindow.cpp`, and header metadata in `src/Metadata.cpp`. `Exif::describe()` turns an
   Exif block into readable metadata entries.
 - User-visible settings persist through `QSettings` with keys defined as constants near the top
-  of `MainWindow.cpp`.
+  of `MainWindow.cpp` (self-contained panels such as `ScopesPanel` keep their own keys at the
+  top of their .cpp).
+- The scopes (`ScopesPanel`) get the viewed image from `MainWindow::updateScopes()`, which must be
+  called wherever the viewed image or the color view changes (`showFrame`, `showGifFrame`,
+  `refreshCurrentDisplay`); `showGrid()` clears them. Their "Display" source is the rendered
+  8-bit image, so they follow the color view and LUT like the pixel readout's display values.
 - The folder panel (`FolderTreePanel`) is two views stacked to look like one Explorer-style
   pane: a `QTreeWidget` with the Quick access and This PC headings (pins are the children of
   Quick access) and below it the `QFileSystemModel` drive tree, indented to sit under This PC.
