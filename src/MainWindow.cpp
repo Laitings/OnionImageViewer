@@ -921,8 +921,6 @@ void MainWindow::createMenus()
     connect(editMenu, &QMenu::aboutToShow, this, &MainWindow::updateEditActions);
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("View"));
-    viewMenu->addAction(m_backAction);
-    viewMenu->addAction(m_upAction);
     QMenu *gridViewMenu = viewMenu->addMenu(QStringLiteral("Files As"));
     gridViewMenu->addActions(m_gridViewGroup->actions().mid(0, 4));
     gridViewMenu->addSeparator();
@@ -935,8 +933,10 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_playAction);
     viewMenu->addSeparator();
-    viewMenu->addActions(m_compareGroup->actions());
-    viewMenu->addAction(m_pinAction);
+    QMenu *compareMenu = viewMenu->addMenu(QStringLiteral("Compare"));
+    compareMenu->addActions(m_compareGroup->actions());
+    compareMenu->addSeparator();
+    compareMenu->addAction(m_pinAction);
     viewMenu->addSeparator();
     QMenu *channelMenu = viewMenu->addMenu(QStringLiteral("Channels"));
     channelMenu->addActions(m_channelGroup->actions());
