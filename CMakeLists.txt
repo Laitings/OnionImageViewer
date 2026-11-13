@@ -37,13 +37,15 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_add_executable(OnionImageViewer
     WIN32
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/UpdateChecker.h
+    src/UpdateChecker.cpp
     src/FolderTreePanel.h
     src/FolderTreePanel.cpp
     src/ImageViewport.h
@@ -87,6 +89,7 @@ qt_add_executable(OnionImageViewer
 target_link_libraries(OnionImageViewer
     PRIVATE
         Qt6::Widgets
+        Qt6::Network
 )
 
 # App logo: the PNG is built in for the window icon and the About box; the .ico becomes the

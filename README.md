@@ -23,6 +23,8 @@ the full file metadata, and export what you see with the view burned in.
 
 View → Keyboard Shortcuts in the app lists all the keys.
 
+On startup, the app checks GitHub for a newer stable release and offers to open its download page if one is available. Check again from Help → About OnionImageViewer → Check for Updates.
+
 Use the search field beside the path bar (Ctrl+F) to filter the current folder by name as you type. Clear it with the field's clear button or Esc while the field has focus.
 
 ## Requirements (Windows)
@@ -30,7 +32,7 @@ Use the search field beside the path bar (Ctrl+F) to filter the current folder b
 | What | Version | Notes |
 | --- | --- | --- |
 | Visual Studio | 2026 (2022 works too) | "Desktop development with C++" workload. Its bundled vcpkg is used for OpenEXR. |
-| Qt | 6.11 `msvc2022_64` | Installed under `C:\Qt\6.11.x\msvc2022_64`. Add **Qt Image Formats** (TIFF, WebP, TGA) and **Qt PDF** (PDF/AI) in the Qt Maintenance Tool. |
+| Qt | 6.11 `msvc2022_64` | Installed under `C:\Qt\6.11.x\msvc2022_64`. Qt Network comes with the base package and powers update checks. Add **Qt Image Formats** (TIFF, WebP, TGA) and **Qt PDF** (PDF/AI) in the Qt Maintenance Tool. |
 | CMake + Ninja | 3.21+ | Both come with Visual Studio. |
 | OpenEXR | from vcpkg | Declared in `vcpkg.json` (pinned baseline, triplet `x64-windows-onion` from `triplets/`, linked statically). Fetched on the first configure. |
 | LibRaw | from vcpkg | DNG decoding with the `dng-lossy` feature. Ships as `raw_r.dll` with its license in `licenses/`. |
