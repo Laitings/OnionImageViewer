@@ -7,8 +7,11 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QThread>
 #include <QThreadPool>
+#include <QTimer>
 
+#include <atomic>
 #include <memory>
 
 class ImageLoader;
@@ -43,12 +46,28 @@ public:
     bool isCached(const QString &path) const;
     void clear();
 
+    // Play the displayed GIF independently of folder sequence playback.
+    void startGif(const QString &path);
+    void stopGif();
+
 signals:
     // Emitted for every frame that finishes loading, not only the requested one, so a viewer
     // that is scrubbing can show frames as they arrive.
     void frameReady(const FrameLoader::Frame &frame, bool requested);
+    void gifFrameReady(const QImage &source, const QImage &display);
 
 private:
+    class GifReader;
+    struct GifFrame
+    {
+        QImage source;
+        QImage display;
+        int delay = 0;
+        int renderGeneration = 0;
+    };
+
+    void requestGifFrame(const QString &path = {});
+    void showGifFrame();
     void startJob(const QString &path, int priority);
     void finished(const Frame &frame, int generation);
     void store(const Frame &frame);
@@ -65,4 +84,9 @@ private:
     QStringList m_lru; // most recently used last
     qint64 m_cacheBytes = 0;
     qint64 m_budgetBytes = 0;
+    QThread m_gifThread;
+    GifReader *m_gifReader = nullptr;
+    std::atomic<int> m_gifGeneration{0};
+    QTimer m_gifTimer;
+    GifFrame m_nextGifFrame;
 };
