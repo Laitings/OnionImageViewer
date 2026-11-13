@@ -315,9 +315,11 @@ void ImageViewport::paintEvent(QPaintEvent *event)
         return;
     }
 
-    drawCheckerboard(painter, visibleTarget.toAlignedRect());
-
     const bool wipe = m_wipeEnabled && !m_compareImage.isNull();
+    if (m_image.hasAlphaChannel() || (wipe && m_compareImage.hasAlphaChannel())) {
+        drawCheckerboard(painter, visibleTarget);
+    }
+
     if (!wipe) {
         drawMainImage(painter, target, visibleTarget);
     } else {
@@ -385,10 +387,13 @@ void ImageViewport::paintEvent(QPaintEvent *event)
 
 void ImageViewport::drawMainImage(QPainter &painter, const QRectF &target, const QRectF &visibleTarget)
 {
-    // Downscaled view with an up-to-date cache: draw the pre-scaled pixmap 1:1, which is cheap.
+    // Map the rounded cache dimensions to the same rectangle as the uncached image.
     if (m_zoom < 1.0 && !m_scaledCache.isNull() && qFuzzyCompare(m_scaledCacheZoom, m_zoom)) {
-        const QPointF topLeft = target.topLeft();
-        const QRectF source = visibleTarget.translated(-topLeft);
+        const double sx = m_scaledCache.width() / target.width();
+        const double sy = m_scaledCache.height() / target.height();
+        const QRectF source((visibleTarget.left() - target.left()) * sx,
+                            (visibleTarget.top() - target.top()) * sy,
+                            visibleTarget.width() * sx, visibleTarget.height() * sy);
         painter.drawPixmap(visibleTarget, m_scaledCache, source);
         return;
     }
@@ -559,7 +564,7 @@ void ImageViewport::setZoomAroundPoint(double zoom, const QPointF &viewportPoint
     update();
 }
 
-void ImageViewport::drawCheckerboard(QPainter &painter, const QRect &rect)
+void ImageViewport::drawCheckerboard(QPainter &painter, const QRectF &rect)
 {
     if (rect.isEmpty()) {
         return;
