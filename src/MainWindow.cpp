@@ -530,6 +530,9 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             return true;
         }
     }
+    if (event->type() == QEvent::Resize && (watched == this || watched == m_metadataDock || watched == m_contentStack)) {
+        QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
+    }
     if (watched == m_imagePage && event->type() == QEvent::Resize) {
         layoutOverlayButtons();
     }
@@ -769,6 +772,7 @@ void MainWindow::createActions()
         if (visible) {
             scheduleMetadata();
         }
+        QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     });
     m_metadataPool.setMaxThreadCount(1);
     m_metadataTimer.setSingleShot(true);
@@ -1073,6 +1077,11 @@ void MainWindow::createCentralLayout()
     m_thumbnailSizeSlider->setToolTip(QStringLiteral("Thumbnail size (Ctrl + scroll wheel; right-click the files for more views)"));
     m_thumbnailSizeSlider->setFocusPolicy(Qt::NoFocus);
     statusBar()->addPermanentWidget(m_thumbnailSizeSlider);
+    // Empty space right of the slider, as wide as whatever sits right of the grid (the metadata
+    // panel), so the slider always ends at the grid's bottom-right corner.
+    m_sliderSpacer = new QWidget(this);
+    m_sliderSpacer->setFixedWidth(0);
+    statusBar()->addPermanentWidget(m_sliderSpacer);
     connect(m_thumbnailSizeSlider, &QSlider::valueChanged, this, &MainWindow::setThumbnailDisplaySize);
     connect(m_contentStack, &QStackedWidget::currentChanged, this, &MainWindow::updateGridChrome);
     connect(m_imageViewport, &ImageViewport::hoveredPixelChanged, this, &MainWindow::updatePixelReadout);
@@ -2312,12 +2321,39 @@ void MainWindow::updateGridViewActions()
     }
 }
 
+void MainWindow::alignSizeSlider()
+{
+    if (!m_sliderSpacer || !m_thumbnailSizeSlider || !m_thumbnailSizeSlider->isVisible()) {
+        return;
+    }
+    constexpr int Inset = 6;
+    QStatusBar *bar = statusBar();
+    // Room the status bar keeps right of its last widget (size grip, margins). Measured once while
+    // the spacer is empty and laid out; it doesn't change after that.
+    if (m_statusBarReserve < 0) {
+        if (m_sliderSpacer->width() != 0 || m_sliderSpacer->x() <= 0) {
+            return;
+        }
+        m_statusBarReserve = bar->width() - m_sliderSpacer->x();
+    }
+    const int reserve = m_statusBarReserve;
+    const int gridRight = bar->mapFrom(this, m_contentStack->mapTo(this, QPoint(m_contentStack->width(), 0))).x();
+    const int width = qBound(0, bar->width() - reserve - (gridRight - Inset), bar->width() / 2);
+    if (width != m_sliderSpacer->width()) {
+        m_sliderSpacer->setFixedWidth(width);
+    }
+}
+
 // The size slider and the Details header belong to the grid, so they hide while an image is open.
 void MainWindow::updateGridChrome()
 {
     const bool gridShown = m_contentStack && m_contentStack->currentWidget() == m_fileGrid;
     if (m_thumbnailSizeSlider) {
         m_thumbnailSizeSlider->setVisible(gridShown);
+        if (m_sliderSpacer) {
+            m_sliderSpacer->setVisible(gridShown);
+        }
+        QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     }
     if (m_detailsHeader) {
         m_detailsHeader->setVisible(gridShown && m_gridView == GridView::Details);

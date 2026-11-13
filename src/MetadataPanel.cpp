@@ -57,7 +57,7 @@ MetadataPanel::MetadataPanel(QWidget *parent)
     filterRow->addWidget(copyButton);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setContentsMargins(6, 6, 6, 0); // flush with the bottom of the file grid
     layout->addWidget(m_titleLabel);
     layout->addLayout(filterRow);
     layout->addWidget(m_tree, 1);

@@ -101,6 +101,7 @@ private:
     void stepGridView(int direction); // Ctrl+scroll wheel: sizes, then List, Details, Tiles
     void updateGridViewActions();
     void updateGridChrome();
+    void alignSizeSlider(); // keep the slider under the grid's right edge, left of the metadata panel
     QSize thumbnailResolution() const;
     void requestThumbnail(QListWidgetItem *item, int priority);
     void applyThumbnail(const QString &filePath, int generation, const QImage &thumbnail, bool pending);
@@ -219,6 +220,8 @@ private:
     int m_thumbnailGeneration = 0;
     int m_thumbnailDisplaySize = 128;
     QSlider *m_thumbnailSizeSlider = nullptr;
+    QWidget *m_sliderSpacer = nullptr;
+    int m_statusBarReserve = -1; // room right of the status bar's last widget (size grip)
     GridView m_gridView = GridView::Icons;
     qreal m_wheelRemainder = 0.0; // part of a pixel left over from high-resolution wheels
     FileItemDelegate *m_fileDelegate = nullptr;
