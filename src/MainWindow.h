@@ -15,6 +15,7 @@
 #include <memory>
 
 class QAction;
+class QCheckBox;
 class QDialog;
 class UpdateChecker;
 class QActionGroup;
@@ -90,8 +91,8 @@ private:
     void handleFolderSelected(const QString &folderPath);
     void handleGridItemActivated(QListWidgetItem *item);
     void populateFileGrid(const QString &folderPath, bool addToHistory = true);
-    // Filters the existing folder items by name without accessing the filesystem.
-    void applyGridSearch(const QString &text);
+    // Applies the name and file type filters without accessing the filesystem.
+    void applyGridFilters();
     void navigateBack();
     void navigateUp();
     void updateBackAction();
@@ -172,7 +173,8 @@ private:
     QPointer<QDialog> m_updateDialog;
     PathBar *m_pathBar = nullptr;
     QLineEdit *m_gridSearch = nullptr;
-    int m_gridSearchMatches = 0;
+    QCheckBox *m_imagesOnly = nullptr;
+    int m_visibleGridItems = 0;
     QLabel *m_infoLabel = nullptr;
     QLabel *m_pixelLabel = nullptr;
     QLabel *m_swatchLabel = nullptr;
