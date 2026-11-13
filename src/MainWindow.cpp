@@ -597,6 +597,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (m_fileGrid && !m_shiftSelecting && handleGridSelectionEvent(watched, event)) {
         return true;
     }
+    if (m_gridSearch && watched == m_gridSearch && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        m_gridSearch->clear();
+        m_fileGrid->setFocus(Qt::ShortcutFocusReason);
+        return true;
+    }
     if (event->type() == QEvent::Resize && (watched == this || watched == m_metadataDock || watched == m_contentStack)) {
         QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     }
@@ -835,7 +841,8 @@ void MainWindow::createActions()
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
         if (!isViewerVisible()) {
-            m_fileGrid->selectAll();
+            m_fileGrid->selectionModel()->select(visibleGridSelection(0, m_fileGrid->count() - 1),
+                                                 QItemSelectionModel::ClearAndSelect);
         }
     });
     m_invertSelectionAction = new QAction(QStringLiteral("Invert Selection"), this);
@@ -843,8 +850,8 @@ void MainWindow::createActions()
         if (isViewerVisible()) {
             return;
         }
-        QItemSelection all(m_fileGrid->model()->index(0, 0), m_fileGrid->model()->index(m_fileGrid->count() - 1, 0));
-        m_fileGrid->selectionModel()->select(all, QItemSelectionModel::Toggle);
+        m_fileGrid->selectionModel()->select(visibleGridSelection(0, m_fileGrid->count() - 1),
+                                             QItemSelectionModel::Toggle);
     });
 
 #ifdef Q_OS_WIN
@@ -959,6 +966,7 @@ void MainWindow::createMenus()
             "  Ctrl+0 / 3 / 4  None / LogC3 / LogC4\n"
             "  Ctrl+L  LUT file,  Ctrl+Shift+L  load a LUT\n\n"
             "File browser (like Explorer):\n"
+            "  Ctrl+F  search the current folder,  Esc  clear search\n"
             "  Click, Ctrl+click, Shift+click, or drag a box around files to select them\n"
             "  Shift+arrows extend the selection,  Ctrl+arrows move without selecting,\n"
             "  Ctrl+Space selects or unselects,  Ctrl+A selects all\n"
@@ -1142,6 +1150,21 @@ void MainWindow::createCentralLayout()
         navigationLayout->addWidget(button);
     }
     navigationLayout->addWidget(m_pathBar, 1);
+    m_gridSearch = new QLineEdit(navigationRow);
+    m_gridSearch->setPlaceholderText(QStringLiteral("Search this folder"));
+    m_gridSearch->setAccessibleName(QStringLiteral("Search this folder"));
+    m_gridSearch->addAction(Icons::icon(Icons::Kind::Search), QLineEdit::LeadingPosition);
+    m_gridSearch->setClearButtonEnabled(true);
+    m_gridSearch->setMaximumWidth(240);
+    navigationLayout->addWidget(m_gridSearch);
+    connect(m_gridSearch, &QLineEdit::textChanged, this, &MainWindow::applyGridSearch);
+    auto *searchShortcut = new QShortcut(QKeySequence::Find, this);
+    connect(searchShortcut, &QShortcut::activated, this, [this]() {
+        if (m_gridSearch->isVisible()) {
+            m_gridSearch->setFocus(Qt::ShortcutFocusReason);
+            m_gridSearch->selectAll();
+        }
+    });
     rightLayout->addWidget(navigationRow);
     connect(m_pathBar, &PathBar::pathActivated, this, &MainWindow::handlePathActivated);
     for (const QKeySequence &keys : {QKeySequence(Qt::ALT | Qt::Key_D), QKeySequence(Qt::Key_F4)}) {
@@ -1766,7 +1789,9 @@ void MainWindow::updateImageInfo()
             m_infoLabel->clear();
             return;
         }
-        QString text = QStringLiteral("%1 images").arg(m_currentImagePaths.size());
+        QString text = !isViewerVisible() && !m_gridSearch->text().trimmed().isEmpty()
+            ? QStringLiteral("%1 of %2 items").arg(m_gridSearchMatches).arg(m_fileGrid->count())
+            : QStringLiteral("%1 images").arg(m_currentImagePaths.size());
         const QList<QListWidgetItem *> selected = m_fileGrid->selectedItems();
         if (!selected.isEmpty()) {
             qint64 bytes = 0;
@@ -2248,6 +2273,24 @@ void MainWindow::showGridContextMenu(const QPoint &pos)
     menu.exec(m_fileGrid->viewport()->mapToGlobal(pos));
 }
 
+QItemSelection MainWindow::visibleGridSelection(int first, int last) const
+{
+    QItemSelection selection;
+    int start = first;
+    for (int row = first; row <= last; ++row) {
+        if (m_fileGrid->item(row)->isHidden()) {
+            if (start < row) {
+                selection.select(m_fileGrid->model()->index(start, 0), m_fileGrid->model()->index(row - 1, 0));
+            }
+            start = row + 1;
+        }
+    }
+    if (start <= last) {
+        selection.select(m_fileGrid->model()->index(start, 0), m_fileGrid->model()->index(last, 0));
+    }
+    return selection;
+}
+
 // Shift-selection the way Explorer does it: Shift+click and Shift+arrows select the run of files
 // from the anchor (the last file clicked or moved to without Shift) to here, in list order, and
 // drop the rest of the selection; with Ctrl as well, the run is added to it. Qt on its own keeps
@@ -2257,12 +2300,10 @@ bool MainWindow::handleGridSelectionEvent(QObject *watched, QEvent *event)
     QItemSelectionModel *selection = m_fileGrid->selectionModel();
     auto selectRun = [this, selection](const QModelIndex &to, bool add) {
         QModelIndex from = m_selectionAnchor;
-        if (!from.isValid()) {
+        if (!from.isValid() || m_fileGrid->item(from.row())->isHidden()) {
             from = to;
         }
-        const QModelIndex first = from.row() <= to.row() ? from : to;
-        const QModelIndex last = from.row() <= to.row() ? to : from;
-        const QItemSelection run(first, last);
+        const QItemSelection run = visibleGridSelection(qMin(from.row(), to.row()), qMax(from.row(), to.row()));
         if (add) {
             selection->select(run, QItemSelectionModel::Select);
         } else {
@@ -2338,7 +2379,7 @@ QStringList MainWindow::selectedPaths() const
     QStringList paths;
     for (int row = 0; row < m_fileGrid->count(); ++row) {
         const QListWidgetItem *item = m_fileGrid->item(row);
-        if (item->isSelected()) {
+        if (!item->isHidden() && item->isSelected()) {
             paths.append(item->data(FilePathRole).toString());
         }
     }
@@ -2570,6 +2611,9 @@ void MainWindow::finishFileJob()
             QListWidgetItem *first = nullptr;
             for (int row = 0; row < m_fileGrid->count(); ++row) {
                 QListWidgetItem *item = m_fileGrid->item(row);
+                if (item->isHidden()) {
+                    continue;
+                }
                 const QString path = item->data(FilePathRole).toString();
                 for (const QString &made : created) {
                     if (same(path, made)) {
@@ -2994,6 +3038,7 @@ void MainWindow::alignSizeSlider()
 void MainWindow::updateGridChrome()
 {
     const bool gridShown = m_contentStack && m_contentStack->currentWidget() == m_fileGrid;
+    m_gridSearch->setVisible(gridShown);
     if (m_thumbnailSizeSlider) {
         m_thumbnailSizeSlider->setVisible(gridShown);
         if (m_sliderSpacer) {
@@ -3069,7 +3114,8 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         return;
     }
 
-    if (addToHistory && !m_currentFolderPath.isEmpty() && QDir::cleanPath(m_currentFolderPath) != QDir::cleanPath(folderPath)) {
+    const bool folderChanged = QDir::cleanPath(m_currentFolderPath) != QDir::cleanPath(folderPath);
+    if (addToHistory && !m_currentFolderPath.isEmpty() && folderChanged) {
         m_folderHistory.append(m_currentFolderPath);
     }
 
@@ -3083,6 +3129,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     m_thumbnailPool.clear();
     ++m_thumbnailGeneration;
     m_fileGrid->clear();
+    if (folderChanged) {
+        m_gridSearch->clear();
+    }
 
     QFileIconProvider iconProvider;
     const QLocale locale;
@@ -3128,6 +3177,9 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
         }
     }
 
+    if (!m_gridSearch->text().isEmpty()) {
+        applyGridSearch(m_gridSearch->text());
+    }
     stopPlayback();
     showGrid();
     m_pathBar->setPath(folderPath);
@@ -3137,6 +3189,36 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     }
     QTimer::singleShot(0, this, &MainWindow::scheduleVisibleThumbnails);
     m_thumbnailScheduleTimer.start(250);
+}
+
+void MainWindow::applyGridSearch(const QString &text)
+{
+    const QString query = text.trimmed();
+    m_gridSearchMatches = 0;
+    QItemSelection hiddenSelection;
+    for (int row = 0; row < m_fileGrid->count(); ++row) {
+        QListWidgetItem *item = m_fileGrid->item(row);
+        const bool hidden = !item->text().contains(query, Qt::CaseInsensitive);
+        if (!hidden) {
+            ++m_gridSearchMatches;
+        }
+        if (item->isHidden() != hidden) {
+            item->setHidden(hidden);
+        }
+    }
+    // Hiding a row preserves its Qt selection. Deselect hidden rows before file actions run.
+    auto *selection = m_fileGrid->selectionModel();
+    for (const QModelIndex &index : selection->selectedIndexes()) {
+        if (m_fileGrid->item(index.row())->isHidden()) {
+            hiddenSelection.select(index, index);
+        }
+    }
+    selection->select(hiddenSelection, QItemSelectionModel::Deselect);
+    if (const auto *current = m_fileGrid->currentItem(); current && current->isHidden()) {
+        selection->clearCurrentIndex();
+    }
+    updateImageInfo();
+    m_thumbnailScheduleTimer.start();
 }
 
 void MainWindow::navigateBack()
@@ -3194,7 +3276,8 @@ void MainWindow::showGrid()
     updateColorButton(m_view);
     // Keep the grid on the image that was being viewed.
     if (m_currentImageIndex >= 0 && m_currentImageIndex < m_currentImagePaths.size()) {
-        if (QListWidgetItem *item = m_thumbnailItems.value(m_currentImagePaths.at(m_currentImageIndex))) {
+        if (QListWidgetItem *item = m_thumbnailItems.value(m_currentImagePaths.at(m_currentImageIndex));
+            item && !item->isHidden()) {
             m_fileGrid->setCurrentItem(item);
             m_fileGrid->scrollToItem(item);
         }
@@ -3275,8 +3358,8 @@ void MainWindow::scheduleVisibleThumbnails()
         return;
     }
 
-    auto needsThumbnail = [this](const QListWidgetItem *item) {
-        return item && item->data(IsImageRole).toBool() && !item->data(ThumbnailLoadedRole).toBool();
+    auto needsThumbnail = [](const QListWidgetItem *item) {
+        return !item->isHidden() && item->data(IsImageRole).toBool() && !item->data(ThumbnailLoadedRole).toBool();
     };
 
     // On-screen items first, at high priority so they jump ahead of background work.
@@ -3285,6 +3368,9 @@ void MainWindow::scheduleVisibleThumbnails()
     const QRect visibleRect = m_fileGrid->viewport()->rect();
     for (int row = 0; row < m_fileGrid->count(); ++row) {
         QListWidgetItem *item = m_fileGrid->item(row);
+        if (item->isHidden()) {
+            continue;
+        }
         if (!m_fileGrid->visualItemRect(item).intersects(visibleRect)) {
             if (firstVisibleRow >= 0) {
                 break; // rows are laid out in order, so the visible ones are contiguous

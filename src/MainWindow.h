@@ -22,6 +22,7 @@ class ImageViewport;
 class QColor;
 class QIcon;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QMenu;
@@ -35,6 +36,7 @@ class QDragEnterEvent;
 class QDropEvent;
 class QSlider;
 class QHeaderView;
+class QItemSelection;
 class FileItemDelegate;
 class QSplitter;
 class QProgressDialog;
@@ -85,6 +87,8 @@ private:
     void handleFolderSelected(const QString &folderPath);
     void handleGridItemActivated(QListWidgetItem *item);
     void populateFileGrid(const QString &folderPath, bool addToHistory = true);
+    // Filters the existing folder items by name without accessing the filesystem.
+    void applyGridSearch(const QString &text);
     void navigateBack();
     void navigateUp();
     void updateBackAction();
@@ -146,6 +150,8 @@ private:
 
     // File browser selection and the file clipboard (copy, cut and paste, also with Explorer).
     bool handleGridSelectionEvent(QObject *watched, QEvent *event);
+    // Builds a selection in grid order with filtered-out rows omitted.
+    QItemSelection visibleGridSelection(int first, int last) const;
     QStringList selectedPaths() const;
     void copySelectedFiles(bool cut);
     void pasteFiles(const QString &targetFolder);
@@ -162,6 +168,8 @@ private:
     UpdateChecker *m_updateChecker = nullptr;
     bool m_aboutOpen = false;
     PathBar *m_pathBar = nullptr;
+    QLineEdit *m_gridSearch = nullptr;
+    int m_gridSearchMatches = 0;
     QLabel *m_infoLabel = nullptr;
     QLabel *m_pixelLabel = nullptr;
     QLabel *m_swatchLabel = nullptr;
