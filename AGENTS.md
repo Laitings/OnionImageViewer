@@ -13,8 +13,12 @@ adds what you need to change the code safely.
 - Optional features are compile-time switches set by CMake: `ONION_HAVE_OPENEXR` (OpenEXR found)
   and `ONION_HAVE_QTPDF` (Qt PDF found). Code using them must build with and without them.
 - New source files must be added to the `qt_add_executable` list in `CMakeLists.txt`.
-- The version is `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`; the installer
-  script reads it from there.
+- The version is `project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`, unless
+  `-DONION_VERSION` overrides it (the release workflow passes the GitHub release tag). It reaches
+  the code through the generated `Version.h` (`ONION_VERSION_STRING`).
+- `.github/workflows/release-installer.yml` builds the installer when a GitHub release is
+  published and attaches it to the release. It fetches Qt from download.qt.io itself (aqtinstall
+  can't read Qt 6.11's repository layout); add new Qt modules to its package list.
 
 ## Building
 

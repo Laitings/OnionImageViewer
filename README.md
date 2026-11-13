@@ -62,7 +62,8 @@ Notes:
 
 - **Close the app before rebuilding.** A running `OnionImageViewer.exe` locks the file and the link step fails.
 - vcpkg is picked up automatically from `VCPKG_ROOT`, or else from Visual Studio (`%VSINSTALLDIR%\VC\vcpkg`). It has to be set up when the build folder is first configured; a build folder made without it must be deleted and configured again.
-- `-DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri` copies ARRI's LogC3/LogC4 → Rec.709 `.cube` files into `luts/` next to the .exe, where the ARRI views use them instead of the built-in curves.
+- ARRI's LogC3/LogC4 → Rec.709 `.cube` files from `resources/luts/arri` are copied into `luts/` next to the .exe, where the ARRI views use them instead of the built-in curves. `-DONION_ARRI_LUT_DIR=Q:/Davinci_Shared_LUTs/Arri` takes them from another folder.
+- `-DONION_VERSION=1.2.0` sets the version the app shows (default: the CMake project version).
 - Settings (view mode, color view, recent files, folders) are kept with `QSettings` under `OnionImageViewer` in the registry.
 
 ## Windows installer
@@ -72,7 +73,19 @@ Double-click `installer\build-installer.bat` (or run `installer\build-installer.
 collects the .exe, Qt (via `windeployqt`), the MSVC runtime and the ARRI LUTs in
 `installer\stage`, and compiles `installer\OnionImageViewer.iss` with Inno Setup into
 `installer\Output\OnionImageViewer-Setup-<version>.exe`. The version comes from
-`project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt`.
+`project(OnionImageViewer VERSION x.y.z)` in `CMakeLists.txt` unless `-Version` is given.
+ARRI's LogC3/LogC4 → Rec.709 LUTs come from `resources\luts\arri` (`-ArriLutDir` uses another
+folder instead).
+
+### Installer on GitHub releases
+
+Publishing a GitHub release builds the installer automatically
+(`.github/workflows/release-installer.yml`): on GitHub, Releases → Draft a new release, pick a tag
+such as `v1.2.0` and publish. The workflow builds the app with Qt 6.11 (Image Formats, Qt PDF) and
+OpenEXR on Windows, and about 10 minutes later `OnionImageViewer-Setup-1.2.0.exe` is attached to
+the release. The tag (without the `v`) becomes the version everywhere: the About box, the .exe's
+file properties and the installer. It can also be run by hand from Actions → Release installer →
+Run workflow; that gives a test installer as a download on the run, with no release.
 
 ## Code layout
 

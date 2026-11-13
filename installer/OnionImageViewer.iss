@@ -5,6 +5,10 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; Windows file versions must be plain numbers (1.2.0), so a tag like 1.2.0-beta passes 1.2.0 here.
+#ifndef NumericVersion
+  #define NumericVersion AppVersion
+#endif
 #ifndef StageDir
   #define StageDir "stage"
 #endif
@@ -44,7 +48,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=yes
 ChangesAssociations=yes
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
 VersionInfoDescription={#AppName} Setup
 
 [Tasks]

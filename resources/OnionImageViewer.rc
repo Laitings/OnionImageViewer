@@ -1,2 +1,34 @@
-// Windows resources: the icon Explorer, the taskbar and shortcuts show for the .exe.
+// Windows resources: the icon Explorer, the taskbar and shortcuts show for the .exe, and the
+// version shown in its file properties.
+#include <winver.h>
+#include "Version.h"
+
 IDI_ICON1 ICON "icons/OnionImageViewer.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION ONION_VERSION_COMMAS
+PRODUCTVERSION ONION_VERSION_COMMAS
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Onion"
+            VALUE "FileDescription", "Onion Image Viewer"
+            VALUE "FileVersion", ONION_VERSION_STRING
+            VALUE "InternalName", "OnionImageViewer"
+            VALUE "OriginalFilename", "OnionImageViewer.exe"
+            VALUE "ProductName", "Onion Image Viewer"
+            VALUE "ProductVersion", ONION_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

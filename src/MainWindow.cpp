@@ -948,10 +948,10 @@ void MainWindow::showAbout()
     box.setWindowTitle(QStringLiteral("About OnionImageViewer"));
     box.setIconPixmap(QIcon(QStringLiteral(":/icons/OnionImageViewer.png")).pixmap(QSize(96, 96)));
     box.setTextFormat(Qt::RichText);
-    box.setText(QStringLiteral("<h3>OnionImageViewer</h3>"
+    box.setText(QStringLiteral("<h3>OnionImageViewer %1</h3>"
                                "<p>Image viewer and batch converter.</p>"
-                               "<p>Built with Qt %1.</p>")
-                    .arg(QString::fromLatin1(qVersion())));
+                               "<p>Built with Qt %2.</p>")
+                    .arg(QCoreApplication::applicationVersion(), QString::fromLatin1(qVersion())));
     box.exec();
 }
 
