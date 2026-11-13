@@ -935,8 +935,10 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_playAction);
     viewMenu->addSeparator();
-    viewMenu->addActions(m_compareGroup->actions());
-    viewMenu->addAction(m_pinAction);
+    QMenu *compareMenu = viewMenu->addMenu(QStringLiteral("Compare"));
+    compareMenu->addActions(m_compareGroup->actions());
+    compareMenu->addSeparator();
+    compareMenu->addAction(m_pinAction);
     viewMenu->addSeparator();
     QMenu *channelMenu = viewMenu->addMenu(QStringLiteral("Channels"));
     channelMenu->addActions(m_channelGroup->actions());
