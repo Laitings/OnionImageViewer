@@ -40,9 +40,17 @@ public:
     // Image pixel under a viewport position, or (-1, -1) outside the image.
     QPoint imagePixelAt(const QPointF &viewportPoint) const;
 
+    // Split viewer: takes over another viewport's zoom and position. Images of different sizes
+    // are shown at the same width on screen, so the same part of the frame lines up.
+    void matchView(const ImageViewport &other);
+    // Split viewer: draws an accent frame around the viewport to mark the active pane.
+    void setHighlighted(bool highlighted);
+
 signals:
     // The image pixel under the mouse, or (-1, -1) when the mouse is outside the image.
     void hoveredPixelChanged(const QPoint &pixel);
+    // The user zoomed (wheel) or panned (drag). Not emitted for changes made in code.
+    void viewChangedByUser();
 
 public slots:
     void fitToWindow();
@@ -58,6 +66,7 @@ protected:
     void leaveEvent(QEvent *event) override;
 
 private:
+    void paintImage(QPainter &painter, QPaintEvent *event);
     QRectF imageRect() const;
     void clampPan();
     void setZoomAroundPoint(double zoom, const QPointF &viewportPoint);
@@ -96,4 +105,5 @@ private:
     double m_wipePosition = 0.5; // fraction of the image width
     QString m_overlayText;
     QPoint m_hoveredPixel = QPoint(-1, -1);
+    bool m_highlighted = false;
 };

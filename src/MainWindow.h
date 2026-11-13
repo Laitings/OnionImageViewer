@@ -48,6 +48,7 @@ class QSplitter;
 class QProgressDialog;
 namespace FileOps { class Job; }
 class QStackedWidget;
+class SplitPane;
 
 class MainWindow final : public QMainWindow
 {
@@ -140,6 +141,17 @@ private:
     void updateCompare();
     void updateImageInfo();
     void updatePixelReadout(const QPoint &pixel);
+    void showPixelReadout(const QPoint &pixel, const QImage &source, const QImage &display);
+
+    // Split viewer: a second pane beside (or below) the main viewer with its own file grid.
+    void setSplitEnabled(bool enabled);
+    void setSplitOrientation(Qt::Orientation orientation);
+    void setSplitPaneActive(bool active);
+    bool isSplitPaneActive() const;
+    // The viewport keys and the zoom actions act on: the active pane's.
+    ImageViewport *activeViewport() const;
+    // With Sync Zoom and Pan on, makes the other pane show the same zoom and position as from.
+    void syncSplitViews(ImageViewport *from);
     void showViewerContextMenu(const QPoint &pos);
     void copyColorText(const QString &text, const QColor &color);
     void handlePathActivated(const QString &path);
@@ -244,6 +256,12 @@ private:
     FolderTreePanel *m_folderTreePanel = nullptr;
     QListWidget *m_fileGrid = nullptr;
     ImageViewport *m_imageViewport = nullptr;
+    QSplitter *m_viewerSplitter = nullptr;
+    SplitPane *m_splitPane = nullptr;
+    bool m_splitPaneActive = false;
+    QAction *m_splitAction = nullptr;
+    QActionGroup *m_splitOrientationGroup = nullptr;
+    QAction *m_splitSyncAction = nullptr;
     QStackedWidget *m_contentStack = nullptr;
     QSplitter *m_splitter = nullptr;
     QWidget *m_imagePage = nullptr;

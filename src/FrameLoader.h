@@ -36,6 +36,9 @@ public:
     explicit FrameLoader(std::shared_ptr<const ImageLoader> loader, QObject *parent = nullptr);
     ~FrameLoader() override;
 
+    // How much memory cached frames may use (the default suits the main viewer).
+    void setMemoryBudget(qint64 bytes) { m_budgetBytes = bytes; }
+
     // Changes how frames are rendered; drops cached renders.
     void setRender(ColorTransform::View view, ColorTransform::Input input);
 

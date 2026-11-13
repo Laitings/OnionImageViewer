@@ -19,6 +19,7 @@
 #include "ScopesPanel.h"
 #include "OverlayButton.h"
 #include "PathBar.h"
+#include "SplitPane.h"
 #include "UpdateChecker.h"
 
 #include <QAction>
@@ -278,6 +279,8 @@ const QString SettingsRenameCounterDigits = QStringLiteral("rename/counterDigits
 constexpr int MaxRecentImages = 10;
 const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
+const QString SettingsSplitOrientation = QStringLiteral("viewer/splitOrientation");
+const QString SettingsSplitSync = QStringLiteral("viewer/splitSync");
 const int FilePathRole = Qt::UserRole;
 const int IsFolderRole = Qt::UserRole + 1;
 const int IsImageRole = Qt::UserRole + 2;
@@ -767,8 +770,18 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     if (event->type() == QEvent::Resize && (watched == this || watched == m_metadataDock || watched == m_contentStack)) {
         QTimer::singleShot(0, this, &MainWindow::alignSizeSlider);
     }
-    if (watched == m_imagePage && event->type() == QEvent::Resize) {
+    if ((watched == m_imagePage || watched == m_imageViewport) && event->type() == QEvent::Resize) {
         layoutOverlayButtons();
+    }
+    // A click in either pane of the split viewer makes it the active one.
+    if (event->type() == QEvent::MouseButtonPress && m_splitPane && !m_splitPane->isHidden()) {
+        if (auto *widget = qobject_cast<QWidget *>(watched)) {
+            if (widget == m_splitPane || m_splitPane->isAncestorOf(widget)) {
+                setSplitPaneActive(true);
+            } else if (widget == m_imageViewport) {
+                setSplitPaneActive(false);
+            }
+        }
     }
     if (event->type() == QEvent::MouseMove && watched == m_imageViewport && !m_playTimer.isActive()) {
         revealOverlayButtons();
@@ -844,12 +857,14 @@ void MainWindow::createActions()
 
     m_fitToWindowAction = new QAction(QStringLiteral("Fit to Window"), this);
     connect(m_fitToWindowAction, &QAction::triggered, this, [this]() {
-        m_imageViewport->fitToWindow();
+        activeViewport()->fitToWindow();
+        syncSplitViews(activeViewport());
     });
 
     m_actualSizeAction = new QAction(QStringLiteral("100% Zoom"), this);
     connect(m_actualSizeAction, &QAction::triggered, this, [this]() {
-        m_imageViewport->zoomActualSize();
+        activeViewport()->zoomActualSize();
+        syncSplitViews(activeViewport());
     });
 
     // View transform: how stored values are mapped to the screen (for log camera footage).
@@ -953,6 +968,37 @@ void MainWindow::createActions()
     m_clippingAction->setToolTip(QStringLiteral("Red where the picture is clipped to white, blue where it is crushed to black"));
     connect(m_clippingAction, &QAction::toggled, this, [this](bool on) {
         m_imageViewport->setClippingShown(on);
+        if (m_splitPane) {
+            m_splitPane->viewport()->setClippingShown(on);
+        }
+    });
+
+    // Split viewer: a second pane with its own file grid, to put any two images side by side.
+    m_splitAction = new QAction(QStringLiteral("Split Viewer (V)"), this);
+    m_splitAction->setCheckable(true);
+    m_splitAction->setToolTip(QStringLiteral("Show a second image next to this one, picked from its own file grid"));
+    connect(m_splitAction, &QAction::toggled, this, &MainWindow::setSplitEnabled);
+    m_splitOrientationGroup = new QActionGroup(this);
+    m_splitOrientationGroup->setExclusive(true);
+    for (const auto &entry : {std::pair<Qt::Orientation, const char *>{Qt::Horizontal, "Side by Side"},
+                              std::pair<Qt::Orientation, const char *>{Qt::Vertical, "Top and Bottom"}}) {
+        auto *action = new QAction(QString::fromLatin1(entry.second), m_splitOrientationGroup);
+        action->setCheckable(true);
+        action->setData(int(entry.first));
+        action->setChecked(entry.first == Qt::Horizontal);
+        connect(action, &QAction::triggered, this, [this, orientation = entry.first]() {
+            setSplitOrientation(orientation);
+        });
+    }
+    m_splitSyncAction = new QAction(QStringLiteral("Sync Zoom and Pan"), this);
+    m_splitSyncAction->setCheckable(true);
+    m_splitSyncAction->setChecked(true);
+    m_splitSyncAction->setToolTip(QStringLiteral("Zoom and pan both panes together"));
+    connect(m_splitSyncAction, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue(SettingsSplitSync, on);
+        if (on && m_splitPane) {
+            syncSplitViews(activeViewport());
+        }
     });
 
     m_fullScreenAction = new QAction(QStringLiteral("Full Screen"), this);
@@ -1143,6 +1189,12 @@ void MainWindow::createMenus()
     compareMenu->addActions(m_compareGroup->actions());
     compareMenu->addSeparator();
     compareMenu->addAction(m_pinAction);
+    QMenu *splitMenu = viewMenu->addMenu(QStringLiteral("Split Viewer"));
+    splitMenu->addAction(m_splitAction);
+    splitMenu->addSeparator();
+    splitMenu->addActions(m_splitOrientationGroup->actions());
+    splitMenu->addSeparator();
+    splitMenu->addAction(m_splitSyncAction);
     viewMenu->addSeparator();
     QMenu *channelMenu = viewMenu->addMenu(QStringLiteral("Channels"));
     channelMenu->addActions(m_channelGroup->actions());
@@ -1163,6 +1215,10 @@ void MainWindow::createMenus()
             "  Space  play / pause\n"
             "  W  compare wipe on / off\n"
             "  P  pin this image as the compare image\n"
+            "  V  split viewer on / off (a second pane with its own file grid)\n"
+            "  Tab  switch the active pane; keys and zoom act on the active pane\n"
+            "  In the split pane: Esc / Backspace  its file grid,  Enter  open,\n"
+            "    Backspace in the grid  up one folder,  Esc in the grid  back to the image\n"
             "  F  fit to window,  1  100% zoom\n"
             "  R / G / B / A / L  red / green / blue / alpha / luminance (again for RGB)\n"
             "  C  show clipping\n"
@@ -1464,8 +1520,35 @@ void MainWindow::createCentralLayout()
     imageLayout->setContentsMargins(0, 0, 0, 0);
     imageLayout->setSpacing(0);
 
-    m_imageViewport = new ImageViewport(imagePage);
-    imageLayout->addWidget(m_imageViewport, 0, 0);
+    // The main viewport, and the split viewer's second pane next to it (hidden until V).
+    m_viewerSplitter = new QSplitter(Qt::Horizontal, imagePage);
+    m_viewerSplitter->setChildrenCollapsible(false);
+    m_viewerSplitter->setHandleWidth(4);
+    m_imageViewport = new ImageViewport(m_viewerSplitter);
+    m_splitPane = new SplitPane(m_imageLoader, &loadThumbnailImage,
+                                [this](const QString &path) { return isImageFile(path); }, m_viewerSplitter);
+    m_splitPane->hide();
+    m_viewerSplitter->addWidget(m_imageViewport);
+    m_viewerSplitter->addWidget(m_splitPane);
+    imageLayout->addWidget(m_viewerSplitter, 0, 0);
+    connect(m_splitPane, &SplitPane::closeRequested, this, [this]() {
+        m_splitAction->setChecked(false);
+    });
+    connect(m_splitPane, &SplitPane::contentChanged, this, &MainWindow::updateImageInfo);
+    connect(m_splitPane, &SplitPane::imageOpened, this, [this]() {
+        if (m_splitSyncAction->isChecked()) {
+            syncSplitViews(m_imageViewport);
+        }
+    });
+    connect(m_imageViewport, &ImageViewport::viewChangedByUser, this, [this]() {
+        syncSplitViews(m_imageViewport);
+    });
+    connect(m_splitPane->viewport(), &ImageViewport::viewChangedByUser, this, [this]() {
+        syncSplitViews(m_splitPane->viewport());
+    });
+    connect(m_splitPane->viewport(), &ImageViewport::hoveredPixelChanged, this, [this](const QPoint &pixel) {
+        showPixelReadout(pixel, m_splitPane->sourceImage(), m_splitPane->displayImage());
+    });
 
     // Close / previous / next float over the image (placed in layoutOverlayButtons) and only show
     // while the mouse moves over the viewer.
@@ -1635,6 +1718,10 @@ void MainWindow::loadSettings()
     m_input = ColorTransform::inputFromSettingsKey(settings.value(SettingsInput).toString());
     // The background loader renders the frames, so it has to know the restored view too.
     m_frameLoader->setRender(m_view, m_input);
+    m_splitPane->setRender(m_view, m_input);
+    setSplitOrientation(settings.value(SettingsSplitOrientation).toString() == QLatin1String("vertical")
+                            ? Qt::Vertical : Qt::Horizontal);
+    m_splitSyncAction->setChecked(settings.value(SettingsSplitSync, true).toBool());
     updateLutActions();
     updateViewTransformActions();
     updateInputActions();
@@ -1684,13 +1771,13 @@ void MainWindow::openImagePath(const QString &filePath)
     stopPlayback();
     m_freshOpen = true; // fit the first image; keep zoom and position while stepping after that
     m_displayedIndex = -1;
-    m_contentStack->setCurrentWidget(m_imageViewport->parentWidget());
+    m_contentStack->setCurrentWidget(m_imagePage);
     goToImage(index);
 }
 
 bool MainWindow::isViewerVisible() const
 {
-    return m_contentStack && m_imageViewport && m_contentStack->currentWidget() == m_imageViewport->parentWidget();
+    return m_contentStack && m_imagePage && m_contentStack->currentWidget() == m_imagePage;
 }
 
 void MainWindow::goToImage(int index)
@@ -1871,6 +1958,26 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
     if (!plain) {
         return false;
     }
+    if (event->key() == Qt::Key_V && !shift) {
+        if (!event->isAutoRepeat()) {
+            m_splitAction->toggle();
+        }
+        return true;
+    }
+    if (event->key() == Qt::Key_Tab && m_splitAction->isChecked()) {
+        setSplitPaneActive(!isSplitPaneActive());
+        return true;
+    }
+    if (isSplitPaneActive()) {
+        if (m_splitPane->handleKey(event)) {
+            updateImageInfo();
+            return true;
+        }
+        // The pane's grid gets its own keys (arrows, typing to find a file).
+        if (m_splitPane->isBrowsing()) {
+            return false;
+        }
+    }
     switch (event->key()) {
     case Qt::Key_Right:
     case Qt::Key_Left: {
@@ -1914,10 +2021,12 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
         }
         return true;
     case Qt::Key_F:
-        m_imageViewport->fitToWindow();
+        activeViewport()->fitToWindow();
+        syncSplitViews(activeViewport());
         return true;
     case Qt::Key_1:
-        m_imageViewport->zoomActualSize();
+        activeViewport()->zoomActualSize();
+        syncSplitViews(activeViewport());
         return true;
     case Qt::Key_R:
         setChannel(int(ImageViewport::Channel::Red), true);
@@ -1958,6 +2067,7 @@ bool MainWindow::handleViewerKey(QKeyEvent *event)
 void MainWindow::refreshCurrentDisplay()
 {
     m_frameLoader->setRender(m_view, m_input);
+    m_splitPane->setRender(m_view, m_input);
     if (!m_currentSourceImage.isNull()) {
         m_currentDisplayImage = ColorTransform::toDisplay(m_currentSourceImage, m_view, m_input);
         m_imageViewport->setImage(m_currentDisplayImage, true);
@@ -2041,6 +2151,10 @@ void MainWindow::updateCompare()
 
 void MainWindow::updateImageInfo()
 {
+    if (isViewerVisible() && isSplitPaneActive()) {
+        m_infoLabel->setText(m_splitPane->infoText());
+        return;
+    }
     if (!isViewerVisible() || m_currentSourceImage.isNull()) {
         if (m_currentFolderPath.isEmpty()) {
             m_infoLabel->clear();
@@ -2079,20 +2193,24 @@ void MainWindow::updatePixelReadout(const QPoint &pixel)
 {
     m_hoveredPixel = pixel;
     m_scopesPanel->setHoveredPixel(isViewerVisible() ? pixel : QPoint(-1, -1));
-    if (!isViewerVisible() || pixel.x() < 0 || m_currentSourceImage.isNull()
-        || !m_currentDisplayImage.rect().contains(pixel)) {
+    showPixelReadout(pixel, m_currentSourceImage, m_currentDisplayImage);
+}
+
+void MainWindow::showPixelReadout(const QPoint &pixel, const QImage &source, const QImage &display)
+{
+    if (!isViewerVisible() || pixel.x() < 0 || source.isNull() || !display.rect().contains(pixel)) {
         m_pixelLabel->clear();
         m_swatchLabel->hide();
         return;
     }
-    const QRgb shown = m_currentDisplayImage.pixel(pixel);
+    const QRgb shown = display.pixel(pixel);
     m_swatchLabel->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid #888;")
                                      .arg(QColor(shown).name()));
     m_swatchLabel->show();
     m_pixelLabel->setText(QStringLiteral("x %1  y %2   stored %3   display %4 %5 %6")
                               .arg(pixel.x(), 4)
                               .arg(pixel.y(), 4)
-                              .arg(storedPixelText(m_currentSourceImage, pixel))
+                              .arg(storedPixelText(source, pixel))
                               .arg(qRed(shown), 3)
                               .arg(qGreen(shown), 3)
                               .arg(qBlue(shown), 3));
@@ -2221,6 +2339,7 @@ void MainWindow::setChannel(int channel, bool toggle)
         wanted = ImageViewport::Channel::Rgb;
     }
     m_imageViewport->setChannel(wanted);
+    m_splitPane->viewport()->setChannel(wanted);
     for (QAction *action : m_channelGroup->actions()) {
         action->setChecked(action->data().toInt() == int(wanted));
     }
@@ -3862,7 +3981,8 @@ void MainWindow::layoutOverlayButtons()
         return;
     }
     const int margin = 12;
-    const QRect area = m_imagePage->rect();
+    // Over the main viewport only, so they stay clear of the split pane.
+    const QRect area(m_imageViewport->mapTo(m_imagePage, QPoint(0, 0)), m_imageViewport->size());
     m_closeImageButton->move(area.right() - margin - m_closeImageButton->width() + 1, area.top() + margin);
     m_previousImageButton->move(area.left() + margin, area.center().y() - m_previousImageButton->height() / 2);
     m_nextImageButton->move(area.right() - margin - m_nextImageButton->width() + 1,
@@ -4043,4 +4163,85 @@ bool MainWindow::isImageFile(const QString &filePath) const
 {
     static const QStringList suffixes = supportedImageSuffixes();
     return suffixes.contains(QFileInfo(filePath).suffix().toLower());
+}
+
+void MainWindow::setSplitEnabled(bool enabled)
+{
+    if (enabled != m_splitPane->isHidden()) {
+        return;
+    }
+    if (!enabled) {
+        setSplitPaneActive(false);
+        m_splitPane->hide();
+        m_imageViewport->setHighlighted(false);
+        updateImageInfo();
+        return;
+    }
+    // Start in the folder of the image being viewed, with that image selected.
+    if (m_splitPane->folderPath().isEmpty()) {
+        const QString folder = m_currentImagePath.isEmpty() ? m_currentFolderPath
+                                                            : QFileInfo(m_currentImagePath).absolutePath();
+        m_splitPane->browse(folder, m_currentImagePath);
+    }
+    m_splitPane->show();
+    const bool horizontal = m_viewerSplitter->orientation() == Qt::Horizontal;
+    const int total = horizontal ? m_viewerSplitter->width() : m_viewerSplitter->height();
+    m_viewerSplitter->setSizes({total / 2, total - total / 2});
+    if (!isViewerVisible() && !m_currentImagePath.isEmpty()) {
+        m_contentStack->setCurrentWidget(m_imagePage);
+    }
+    setSplitPaneActive(true);
+    QTimer::singleShot(0, this, &MainWindow::layoutOverlayButtons);
+}
+
+void MainWindow::setSplitOrientation(Qt::Orientation orientation)
+{
+    for (QAction *action : m_splitOrientationGroup->actions()) {
+        action->setChecked(action->data().toInt() == int(orientation));
+    }
+    QSettings().setValue(SettingsSplitOrientation,
+                         orientation == Qt::Vertical ? QStringLiteral("vertical") : QStringLiteral("horizontal"));
+    if (m_viewerSplitter->orientation() == orientation) {
+        return;
+    }
+    m_viewerSplitter->setOrientation(orientation);
+    if (!m_splitPane->isHidden()) {
+        const int total = orientation == Qt::Horizontal ? m_viewerSplitter->width() : m_viewerSplitter->height();
+        m_viewerSplitter->setSizes({total / 2, total - total / 2});
+    }
+    QTimer::singleShot(0, this, &MainWindow::layoutOverlayButtons);
+}
+
+bool MainWindow::isSplitPaneActive() const
+{
+    return m_splitPaneActive && m_splitPane && !m_splitPane->isHidden();
+}
+
+void MainWindow::setSplitPaneActive(bool active)
+{
+    const bool split = !m_splitPane->isHidden();
+    active = active && split;
+    m_splitPaneActive = active;
+    m_splitPane->setActive(active);
+    m_imageViewport->setHighlighted(split && !active);
+    if (active) {
+        m_splitPane->focusContent();
+    } else if (split && QApplication::focusWidget() && m_splitPane->isAncestorOf(QApplication::focusWidget())) {
+        m_imageViewport->setFocus(Qt::OtherFocusReason);
+    }
+    updateImageInfo();
+}
+
+ImageViewport *MainWindow::activeViewport() const
+{
+    return isSplitPaneActive() ? m_splitPane->viewport() : m_imageViewport;
+}
+
+void MainWindow::syncSplitViews(ImageViewport *from)
+{
+    if (!m_splitSyncAction->isChecked() || m_splitPane->isHidden() || !from) {
+        return;
+    }
+    ImageViewport *to = from == m_imageViewport ? m_splitPane->viewport() : m_imageViewport;
+    to->matchView(*from);
 }
