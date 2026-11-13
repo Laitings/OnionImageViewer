@@ -96,6 +96,15 @@ running the app on real files.
   bar row (`m_navigationRow`) and sizes `m_mainNavigation` to end where the pane starts. Both search
   fields use `NameFilter` (`src/NameFilter.h`). `currentPath()` (metadata, Copy Path) and `updateScopes()` read the active pane. New display aids (like channels and clipping) should be applied to both
   viewports.
+- Image sequences: `Sequence::framesOf()` (`src/Sequence.*`) finds the files of the open image's
+  sequence (same folder, prefix and extension, frame number before the extension), ordered by
+  frame number. `MainWindow::updateSequence()` keeps them in `m_sequence` (indices into
+  `m_currentImagePaths`); call it, or clear `m_sequence`/`m_sequencePositions`, wherever
+  `m_currentImagePaths` changes. Playback, Home/End, stepping and read-ahead count in *playback
+  positions* (`playbackPositionOf`, `indexAtPlaybackPosition`): frames of the sequence, or the
+  folder's images when the open image isn't in one. `PlayerBar` only shows state and emits what the
+  user does; `MainWindow::playbackTick()` runs on a precise 4 ms timer and either waits for each
+  frame or, in real-time mode, picks the frame from the clock. Its settings are `playback/*`.
 - The batch renamer is split in two: `BatchRename::` (`src/BatchRename.*`) plans the names and
   carries out renames with no UI, and `BatchRenameDialog` only shows the options and preview.
   `MainWindow::runRename` runs `BatchRename::apply` on `m_batchPool` and keeps each finished batch
