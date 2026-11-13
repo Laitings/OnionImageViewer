@@ -2,6 +2,7 @@
 
 #include "DpxReader.h"
 #include "ExrReader.h"
+#include "PsdReader.h"
 
 #include <QImageReader>
 
@@ -21,6 +22,12 @@ ImageLoader::Result QtImageLoader::load(const QString &filePath) const
     if (Exr::isExrFile(filePath)) {
         QString error;
         QImage image = Exr::read(filePath, &error);
+        return {image, image.isNull() ? error : QString()};
+    }
+
+    if (Psd::isPsdFile(filePath)) {
+        QString error;
+        QImage image = Psd::read(filePath, &error);
         return {image, image.isNull() ? error : QString()};
     }
 

@@ -2,6 +2,7 @@
 
 #include "DpxReader.h"
 #include "ExrReader.h"
+#include "PsdReader.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -567,6 +568,33 @@ void addDpxEntries(QList<Entry> &entries, const QString &filePath)
 // ----------------------------------------------------------------------------------------------
 // Everything else: what Qt's image plugins report.
 
+void addPsdEntries(QList<Entry> &entries, const QString &filePath)
+{
+    const QString group = QStringLiteral("Photoshop");
+    Psd::Info info;
+    QString error;
+    if (!Psd::readInfo(filePath, &info, &error)) {
+        entries.append({group, QStringLiteral("Error"), error});
+        return;
+    }
+    const auto yesNo = [](bool value) { return value ? QStringLiteral("Yes") : QStringLiteral("No"); };
+    entries.append({group, QStringLiteral("Format"), info.large ? QStringLiteral("PSB (large document)") : QStringLiteral("PSD")});
+    entries.append({group, QStringLiteral("Size"), QStringLiteral("%1 × %2").arg(info.width).arg(info.height)});
+    entries.append({group, QStringLiteral("Color mode"), info.colorMode});
+    entries.append({group, QStringLiteral("Bit depth"), QStringLiteral("%1 bits per channel").arg(info.depth)});
+    entries.append({group, QStringLiteral("Channels"), QString::number(info.channels)});
+    entries.append({group, QStringLiteral("Layers"), QString::number(info.layerCount)});
+    entries.append({group, QStringLiteral("Transparency"), yesNo(info.mergedTransparency)});
+    entries.append({group, QStringLiteral("Composite image"),
+                    info.hasComposite ? QStringLiteral("Yes")
+                                      : QStringLiteral("No (saved without Maximize compatibility; layers are blended here)")});
+    entries.append({group, QStringLiteral("ICC profile"), info.iccProfile.isEmpty() ? QStringLiteral("None") : info.iccProfile});
+    if (info.embeddedPreview.isValid()) {
+        entries.append({group, QStringLiteral("Embedded preview"),
+                        QStringLiteral("%1 × %2").arg(info.embeddedPreview.width()).arg(info.embeddedPreview.height())});
+    }
+}
+
 void addQtEntries(QList<Entry> &entries, const QString &filePath)
 {
     QImageReader reader(filePath);
@@ -604,6 +632,8 @@ QList<Entry> read(const QString &filePath)
     addFileEntries(entries, info);
     if (Dpx::isDpxFile(filePath)) {
         addDpxEntries(entries, filePath);
+    } else if (Psd::isPsdFile(filePath)) {
+        addPsdEntries(entries, filePath);
     } else if (Exr::isExrFile(filePath)) {
 #ifdef ONION_HAVE_OPENEXR
         addExrEntries(entries, filePath);
