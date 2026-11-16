@@ -52,6 +52,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileIconProvider>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -644,7 +645,8 @@ MainWindow::MainWindow(QWidget *parent)
     createCentralLayout();
     loadSettings();
     applyPreferences();
-    openStartupFolder();
+    // Listing a big folder takes a while: do it once the window is up and painted, not before.
+    QTimer::singleShot(0, this, &MainWindow::openStartupFolder);
     startInstanceServer();
     qApp->installEventFilter(this);
     setAcceptDrops(true);
@@ -1859,6 +1861,12 @@ void MainWindow::bringToFront()
 
 void MainWindow::openStartupFolder()
 {
+    // A path given on the command line (or opened since) wins over the startup folder.
+    if (m_startupFolderSkipped) {
+        return;
+    }
+    QElapsedTimer timer;
+    timer.start();
     const QSettings settings;
     const QString mode = settings.value(Preferences::StartupFolder, QStringLiteral("none")).toString();
     QString folder;
@@ -1871,6 +1879,10 @@ void MainWindow::openStartupFolder()
     }
     if (!folder.isEmpty() && QDir(folder).exists()) {
         populateFileGrid(folder, false);
+        if (qEnvironmentVariableIsSet("ONION_STARTUP_TIMING")) {
+            statusBar()->showMessage(QStringLiteral("Startup folder listed in %1 ms (%2 items)")
+                                         .arg(timer.elapsed()).arg(m_fileGrid->count()));
+        }
     }
 }
 
@@ -2737,6 +2749,7 @@ void MainWindow::handlePathActivated(const QString &path)
 
 void MainWindow::openPath(const QString &path)
 {
+    m_startupFolderSkipped = true;
     handlePathActivated(path);
 }
 

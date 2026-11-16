@@ -84,6 +84,7 @@ private:
     void applyPreferences();
     // Opens the folder chosen under Preferences > Startup, if any.
     void openStartupFolder();
+    bool m_startupFolderSkipped = false; // a path was opened before the startup folder was listed
     // Listens for files other launches of the app want opened here (see SingleInstance.h).
     void startInstanceServer();
     void bringToFront();
