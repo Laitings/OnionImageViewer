@@ -44,7 +44,9 @@ public:
 
     // Ask for a frame. frameReady is emitted when it is available (right away if cached).
     void request(const QString &path);
-    // Read these ahead at low priority (nearest first), as far as the memory budget allows.
+    // Read these ahead at low priority (nearest first), as far as the memory budget allows. Frames
+    // outside this list are the ones dropped first when the cache is full, so a long sequence of
+    // huge frames keeps reading ahead instead of stalling with a cache full of frames already shown.
     void prefetch(const QStringList &paths);
     bool isCached(const QString &path) const;
     void clear();
@@ -88,6 +90,7 @@ private:
     QSet<QString> m_pending;
     QHash<QString, Frame> m_cache;
     QStringList m_lru; // most recently used last
+    QSet<QString> m_keep; // the read-ahead window from the last prefetch(): evicted last
     qint64 m_cacheBytes = 0;
     qint64 m_budgetBytes = 0;
     QThread m_gifThread;
