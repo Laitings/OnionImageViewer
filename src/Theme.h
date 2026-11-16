@@ -8,7 +8,7 @@
 // `appearance/theme` and applied to the whole application with qApp->setPalette().
 namespace Theme {
 
-enum class Id { System, Light, Dark, Blue, Green, Red, Purple, Jamaica };
+enum class Id { System, Light, Dark, Blue, Green, Red, Purple, Jamaica, Rainbow };
 
 // All themes in the order they are listed in Preferences.
 QList<Id> all();

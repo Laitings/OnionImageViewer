@@ -80,12 +80,28 @@ Colors colorsFor(Theme::Id id)
         // Black, green and gold.
         return {QColor(16, 16, 12), QColor(8, 8, 6), QColor(26, 28, 16), QColor(0, 90, 38),
                 QColor(250, 214, 60), QColor(254, 209, 0), QColor(10, 10, 8), QColor(80, 200, 110), true};
+    case Theme::Id::Rainbow:
+        // A dark base; the rainbow itself is the gradient on the menu bar and toolbar (rainbowStyle).
+        return {QColor(30, 28, 40), QColor(22, 20, 32), QColor(40, 36, 54), QColor(52, 46, 72),
+                QColor(240, 236, 250), QColor(214, 90, 200), QColor(255, 255, 255), QColor(120, 200, 255), true};
     case Theme::Id::System:
     case Theme::Id::Dark:
         break;
     }
     return {QColor(37, 37, 38), QColor(30, 30, 30), QColor(45, 45, 48), QColor(45, 45, 48),
             QColor(230, 230, 230), QColor(0, 122, 204), QColor(255, 255, 255), QColor(86, 156, 214), true};
+}
+
+// Rainbow stripes across the menu bar and toolbar, in deep tones so the light text and icons stay readable.
+QString rainbowStyle()
+{
+    const QString gradient = QStringLiteral(
+        "qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+        " stop:0 #a02828, stop:0.17 #b4641a, stop:0.34 #9c8c14, stop:0.5 #2a8c3c,"
+        " stop:0.67 #2a5ab4, stop:0.84 #5a3aa0, stop:1 #8a3aa8)");
+    return QStringLiteral("QMenuBar, QToolBar { background: %1; border: none; }"
+                          "QMenuBar::item:selected { background: rgba(255, 255, 255, 60); }")
+        .arg(gradient);
 }
 
 // What "System" means right now.
@@ -101,7 +117,7 @@ namespace Theme {
 
 QList<Id> all()
 {
-    return {Id::System, Id::Light, Id::Dark, Id::Blue, Id::Green, Id::Red, Id::Purple, Id::Jamaica};
+    return {Id::System, Id::Light, Id::Dark, Id::Blue, Id::Green, Id::Red, Id::Purple, Id::Jamaica, Id::Rainbow};
 }
 
 QString displayName(Id id)
@@ -115,6 +131,7 @@ QString displayName(Id id)
     case Id::Red: return QStringLiteral("Dark red");
     case Id::Purple: return QStringLiteral("Dark purple");
     case Id::Jamaica: return QStringLiteral("Jamaican man");
+    case Id::Rainbow: return QStringLiteral("Rainbow");
     }
     return QString();
 }
@@ -130,6 +147,7 @@ QString key(Id id)
     case Id::Red: return QStringLiteral("red");
     case Id::Purple: return QStringLiteral("purple");
     case Id::Jamaica: return QStringLiteral("jamaica");
+    case Id::Rainbow: return QStringLiteral("rainbow");
     }
     return QStringLiteral("system");
 }
@@ -168,6 +186,7 @@ void apply(Id id)
 #endif
     qApp->setStyle(QStringLiteral("Fusion"));
     qApp->setPalette(makePalette(colors));
+    qApp->setStyleSheet(shown == Id::Rainbow ? rainbowStyle() : QString());
     // Toolbar and menu icons are painted from the palette; drop the ones drawn in the old colours.
     QPixmapCache::clear();
 }
