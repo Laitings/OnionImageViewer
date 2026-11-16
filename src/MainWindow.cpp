@@ -22,8 +22,10 @@
 #include "NameFilter.h"
 #include "PathBar.h"
 #include "PlayerBar.h"
+#include "PreferencesDialog.h"
 #include "Sequence.h"
 #include "SplitPane.h"
+#include "Theme.h"
 #include "UpdateChecker.h"
 
 #include <QAction>
@@ -627,7 +629,7 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(QStringLiteral("Onion Image Viewer"));
     resize(1280, 800);
 
-    applyDarkPalette();
+    applyTheme();
     m_frameLoader = new FrameLoader(m_imageLoader, this);
     connect(m_frameLoader, &FrameLoader::frameReady, this, &MainWindow::showFrame);
     connect(m_frameLoader, &FrameLoader::gifFrameReady, this, &MainWindow::showGifFrame);
@@ -1161,6 +1163,9 @@ void MainWindow::createMenus()
     fileMenu->addAction(m_copyImageAction);
     fileMenu->addAction(m_copyPathAction);
     fileMenu->addAction(m_showInExplorerAction);
+    fileMenu->addSeparator();
+    fileMenu->addAction(QStringLiteral("Preferences..."), QKeySequence(Qt::CTRL | Qt::Key_Comma), this,
+                        &MainWindow::showPreferences);
     fileMenu->addSeparator();
     fileMenu->addAction(QStringLiteral("Exit"), this, &QWidget::close);
 
@@ -1740,26 +1745,16 @@ void MainWindow::createCentralLayout()
     connect(m_nextImageButton, &OverlayButton::clicked, this, &MainWindow::showNextImage);
 }
 
-void MainWindow::applyDarkPalette()
+void MainWindow::applyTheme()
 {
-    qApp->setStyle(QStringLiteral("Fusion"));
+    Theme::apply(Theme::saved());
+    Theme::watchSystem();
+}
 
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor(37, 37, 38));
-    palette.setColor(QPalette::WindowText, QColor(230, 230, 230));
-    palette.setColor(QPalette::Base, QColor(30, 30, 30));
-    palette.setColor(QPalette::AlternateBase, QColor(45, 45, 48));
-    palette.setColor(QPalette::ToolTipBase, QColor(230, 230, 230));
-    palette.setColor(QPalette::ToolTipText, QColor(30, 30, 30));
-    palette.setColor(QPalette::Text, QColor(230, 230, 230));
-    palette.setColor(QPalette::Button, QColor(45, 45, 48));
-    palette.setColor(QPalette::ButtonText, QColor(230, 230, 230));
-    palette.setColor(QPalette::BrightText, QColor(255, 255, 255));
-    palette.setColor(QPalette::Highlight, QColor(0, 122, 204));
-    palette.setColor(QPalette::HighlightedText, QColor(255, 255, 255));
-    palette.setColor(QPalette::PlaceholderText, QColor(160, 160, 160));
-
-    qApp->setPalette(palette);
+void MainWindow::showPreferences()
+{
+    PreferencesDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::loadSettings()
@@ -4613,7 +4608,14 @@ void MainWindow::setSplitPaneActive(bool active)
     m_splitPane->setActive(active);
     m_imageViewport->setHighlighted(split && !active);
     if (active) {
-        m_splitPane->focusContent();
+        // A click on the pane's search field has already focused it (before this filter ran): leave
+        // it there instead of moving focus to the pane's grid or viewport, which made it need two clicks.
+        QWidget *focused = QApplication::focusWidget();
+        const bool typing = qobject_cast<QLineEdit *>(focused)
+            && (m_splitPane->isAncestorOf(focused) || m_splitPane->header()->isAncestorOf(focused));
+        if (!typing) {
+            m_splitPane->focusContent();
+        }
     } else if (split && QApplication::focusWidget() && m_splitPane->isAncestorOf(QApplication::focusWidget())) {
         m_imageViewport->setFocus(Qt::OtherFocusReason);
     }

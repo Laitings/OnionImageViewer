@@ -1,7 +1,9 @@
 #include "FileItemDelegate.h"
 
 #include <QApplication>
+#include <QHash>
 #include <QHeaderView>
+#include <QImage>
 #include <QPainter>
 #include <QStyle>
 
@@ -30,7 +32,7 @@ QColor textColor(const QStyleOptionViewItem &option, bool secondary)
     const bool selected = option.state & QStyle::State_Selected;
     QColor color = option.palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
     if (secondary && !selected) {
-        color.setAlphaF(0.62);
+        color.setAlphaF(0.62f);
     }
     return color;
 }
@@ -47,7 +49,11 @@ void drawBackground(QPainter *painter, const QStyleOptionViewItem &option)
 void FileItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     if (m_layout == Layout::Standard) {
-        QStyledItemDelegate::paint(painter, option, index);
+        if (m_standardItemSize.isValid()) {
+            paintStandard(painter, option, index);
+        } else {
+            QStyledItemDelegate::paint(painter, option, index);
+        }
         return;
     }
 
@@ -61,6 +67,67 @@ void FileItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &opti
         paintTiles(painter, opt, index);
     }
     painter->restore();
+}
+
+// Icon view: the icon sits in a square box (the view's icon size) and the name below it. Folder
+// icons and small or wide thumbnails don't fill the box, which left the name far beneath the
+// picture, so the icon is moved down until its visible part ends just above the name.
+void FileItemDelegate::paintStandard(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+    const QSize box = opt.decorationSize;
+    const int boxTop = opt.rect.y() + 4;
+    const QRect iconBox(opt.rect.x() + (opt.rect.width() - box.width()) / 2, boxTop, box.width(), box.height());
+
+    // Where the visible part of the icon ends inside the box (cached per pixmap).
+    int visibleBottom = box.height();
+    const QPixmap pixmap = opt.icon.pixmap(box, iconMode(opt));
+    if (!pixmap.isNull()) {
+        static QHash<qint64, int> cache;
+        const qint64 key = pixmap.cacheKey() ^ (qint64(box.width()) << 40) ^ (qint64(box.height()) << 20);
+        auto found = cache.constFind(key);
+        if (found == cache.constEnd()) {
+            const qreal ratio = pixmap.devicePixelRatio();
+            const QImage image = pixmap.toImage();
+            int last = image.height() - 1;
+            if (image.hasAlphaChannel()) {
+                while (last > 0) {
+                    bool empty = true;
+                    for (int x = 0; x < image.width() && empty; ++x) {
+                        empty = qAlpha(image.pixel(x, last)) < 16;
+                    }
+                    if (!empty) {
+                        break;
+                    }
+                    --last;
+                }
+            }
+            const int logicalHeight = int(image.height() / ratio);
+            const int top = (box.height() - logicalHeight) / 2; // the icon is centred in the box
+            if (cache.size() > 4000) {
+                cache.clear();
+            }
+            found = cache.insert(key, top + int((last + 1) / ratio));
+        }
+        visibleBottom = found.value();
+    }
+    const int shift = qMax(0, box.height() - visibleBottom);
+
+    painter->save();
+    opt.icon.paint(painter, iconBox.translated(0, shift), Qt::AlignCenter, iconMode(opt));
+    painter->restore();
+
+    // The name and its selection highlight, in the space below the icon box.
+    QStyleOptionViewItem text = opt;
+    text.icon = QIcon();
+    text.features &= ~QStyleOptionViewItem::HasDecoration;
+    text.decorationSize = QSize();
+    const int textTop = boxTop + box.height() + 2;
+    text.rect = QRect(opt.rect.x(), textTop, opt.rect.width(), qMax(0, opt.rect.bottom() - textTop + 1));
+    const QWidget *widget = opt.widget;
+    QStyle *style = widget ? widget->style() : QApplication::style();
+    style->drawControl(QStyle::CE_ItemViewItem, &text, painter, widget);
 }
 
 void FileItemDelegate::paintDetails(QPainter *painter, const QStyleOptionViewItem &opt) const
