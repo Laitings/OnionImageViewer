@@ -100,7 +100,9 @@ Ghostscript is not bundled (it is AGPL). When it isn't found on the PC, the inst
 page (unticked checkbox) explaining what EPS files are and that Ghostscript draws them; if ticked, the installer downloads the
 official Ghostscript 10.08.0 installer from Artifex (checked against a SHA-256 in
 `OnionImageViewer.iss`) and runs it silently after asking for administrator approval. To move to a
-newer Ghostscript, change `GsFile`, `GsUrl` and `GsSha256` at the top of the script.
+newer Ghostscript, change `GsFile`, `GsUrl` and `GsSha256` at the top of the script. The GitHub
+Actions installer workflow downloads that file and fails if its hash no longer matches
+`GsSha256`, so a stale link or hash is caught before a release is built.
 
 ### Installer on GitHub releases
 
