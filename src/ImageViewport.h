@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QImage>
 #include <QPoint>
 #include <QPixmap>
@@ -105,6 +106,7 @@ private:
     QPixmap m_scaledCache;
     double m_scaledCacheZoom = 0.0;
     QTimer m_smoothRescaleTimer;
+    QElapsedTimer m_imageChanged; // when setImage() last ran
 
     QImage m_original; // as given to setImage, converted for painting
     QImage m_image;    // m_original with the channel/clipping look applied

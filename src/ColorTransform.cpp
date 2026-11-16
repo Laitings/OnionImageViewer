@@ -549,6 +549,28 @@ void forEachRow(int height, qint64 pixelCount, Function rowFunction)
     }
 }
 
+// Reads one row of either a 16-bit RGBX image (4 values per pixel) or an 8-bit RGB32/ARGB32 image,
+// returning 16-bit code values, so 8-bit images don't need a widened copy of the whole picture.
+struct RowCodes
+{
+    const quint16 *wide = nullptr;
+    const QRgb *narrow = nullptr;
+    quint16 r(int x) const { return wide ? wide[x * 4 + 0] : quint16(qRed(narrow[x]) * 257); }
+    quint16 g(int x) const { return wide ? wide[x * 4 + 1] : quint16(qGreen(narrow[x]) * 257); }
+    quint16 b(int x) const { return wide ? wide[x * 4 + 2] : quint16(qBlue(narrow[x]) * 257); }
+};
+
+RowCodes rowCodes(const QImage &input, int y)
+{
+    RowCodes row;
+    if (input.format() == QImage::Format_RGBX64 || input.format() == QImage::Format_RGBX16FPx4) {
+        row.wide = reinterpret_cast<const quint16 *>(input.constScanLine(y));
+    } else {
+        row.narrow = reinterpret_cast<const QRgb *>(input.constScanLine(y));
+    }
+    return row;
+}
+
 QImage applyLut(const QImage &input, bool floatSource, const CubeLut &lut)
 {
     const int width = input.width();
@@ -562,12 +584,12 @@ QImage applyLut(const QImage &input, bool floatSource, const CubeLut &lut)
     const float *cg = coord[1].data();
     const float *cb = coord[2].data();
     forEachRow(height, qint64(width) * height, [&](int y) {
-        const auto *in = reinterpret_cast<const quint16 *>(input.constScanLine(y));
+        const RowCodes in = rowCodes(input, y);
         auto *out = reinterpret_cast<QRgb *>(result.scanLine(y));
         for (int x = 0; x < width; ++x) {
-            const float r = cr[in[x * 4 + 0]];
-            const float g = cg[in[x * 4 + 1]];
-            const float b = cb[in[x * 4 + 2]];
+            const float r = cr[in.r(x)];
+            const float g = cg[in.g(x)];
+            const float b = cb[in.b(x)];
             if (lut.size3D > 0) {
                 out[x] = sample3D(lut, r, g, b);
             } else {
@@ -929,7 +951,11 @@ QImage toDisplay(const QImage &source, View view, Input inputSpace)
     }
 
     // Work from 16-bit values: half floats keep their bit patterns, integers are widened to 16 bit.
-    QImage input = floatSource ? source.convertToFormat(QImage::Format_RGBX16FPx4)
+    // Plain 8-bit images are read in place (widened per pixel) instead of copied at 4x the size.
+    const bool eightBit = !floatSource
+        && (source.format() == QImage::Format_RGB32 || source.format() == QImage::Format_ARGB32);
+    QImage input = eightBit ? source
+                 : floatSource ? source.convertToFormat(QImage::Format_RGBX16FPx4)
                                : source.convertToFormat(QImage::Format_RGBX64);
     if (floatSource && (resolved == Input::Aces2065 || resolved == Input::AcesCg)) {
         input = convertAces(input, view, resolved);
@@ -950,12 +976,12 @@ QImage toDisplay(const QImage &source, View view, Input inputSpace)
     const std::vector<float> &decode = floatSource ? tables.decodeHalf : tables.decode16;
 
     forEachRow(height, qint64(width) * height, [&](int y) {
-        const auto *in = reinterpret_cast<const quint16 *>(input.constScanLine(y));
+        const RowCodes in = rowCodes(input, y);
         auto *out = reinterpret_cast<QRgb *>(result.scanLine(y));
         for (int x = 0; x < width; ++x) {
-            const float r = decode[in[x * 4 + 0]];
-            const float g = decode[in[x * 4 + 1]];
-            const float b = decode[in[x * 4 + 2]];
+            const float r = decode[in.r(x)];
+            const float g = decode[in.g(x)];
+            const float b = decode[in.b(x)];
             float r2 = m[0] * r + m[1] * g + m[2] * b;
             float g2 = m[3] * r + m[4] * g + m[5] * b;
             float b2 = m[6] * r + m[7] * g + m[8] * b;
