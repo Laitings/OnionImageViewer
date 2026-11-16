@@ -1,5 +1,6 @@
 #include "SplitPane.h"
 
+#include "FileItemDelegate.h"
 #include "Icons.h"
 #include "ImageLoader.h"
 #include "ImageViewport.h"
@@ -97,8 +98,12 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     m_grid->setMovement(QListView::Static);
     m_grid->setUniformItemSizes(true);
     m_grid->setIconSize(QSize(IconDisplaySize, IconDisplaySize));
-    m_grid->setGridSize(QSize(IconDisplaySize + 40, IconDisplaySize + 40));
-    m_grid->setSpacing(6);
+    // The same box and drawing as the main grid's icon view, so names are not cut off.
+    m_grid->setGridSize(QSize(qMax(IconDisplaySize + 42, 112), IconDisplaySize + 40));
+    m_grid->setSpacing(10);
+    auto *delegate = new FileItemDelegate(m_grid);
+    delegate->setStandardItemSize(m_grid->gridSize() - QSize(8, 8));
+    m_grid->setItemDelegate(delegate);
     m_grid->setWordWrap(true);
     m_grid->setTextElideMode(Qt::ElideRight);
     m_grid->setSelectionMode(QAbstractItemView::SingleSelection);
