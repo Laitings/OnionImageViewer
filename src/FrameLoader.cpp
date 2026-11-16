@@ -305,6 +305,10 @@ void FrameLoader::finished(const Frame &frame, int generation)
 
 qint64 FrameLoader::frameBytes(const Frame &frame)
 {
+    // An 8-bit image shown as stored has a display that shares the source's pixels: count them once.
+    if (!frame.source.isNull() && frame.source.constBits() == frame.display.constBits()) {
+        return frame.source.sizeInBytes();
+    }
     return frame.source.sizeInBytes() + frame.display.sizeInBytes();
 }
 

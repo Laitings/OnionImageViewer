@@ -51,6 +51,12 @@ ImageViewport::ImageViewport(QWidget *parent)
     m_smoothRescaleTimer.setSingleShot(true);
     m_smoothRescaleTimer.setInterval(SmoothRescaleDelayMs);
     connect(&m_smoothRescaleTimer, &QTimer::timeout, this, [this]() {
+        // During playback every new frame throws the scaled copy away, so building one for a frame
+        // that is about to be replaced is wasted UI-thread time: wait until the image holds still.
+        if (m_imageChanged.isValid() && m_imageChanged.elapsed() < SmoothRescaleDelayMs) {
+            m_smoothRescaleTimer.start();
+            return;
+        }
         rebuildScaledCache();
         update();
     });
@@ -72,6 +78,7 @@ void ImageViewport::setImage(const QImage &image, bool keepView)
     }
     m_image = applyLook(m_original);
     invalidateScaledCache();
+    m_imageChanged.start();
     if (hasAlpha() != hadAlpha) {
         emit alphaPresenceChanged(hasAlpha());
     }
