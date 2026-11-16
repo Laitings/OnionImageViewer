@@ -44,6 +44,7 @@ protected:
     void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
 
 private:
+    void paintStandard(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const;
     void paintDetails(QPainter *painter, const QStyleOptionViewItem &option) const;
     void paintTiles(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const;
 
