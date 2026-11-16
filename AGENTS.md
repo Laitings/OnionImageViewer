@@ -28,7 +28,9 @@ Delegate independent coding tasks to subagents when running them in parallel wou
   the code through the generated `Version.h` (`ONION_VERSION_STRING`).
 - `.github/workflows/release-installer.yml` builds the installer when a GitHub release is
   published and attaches it to the release. It fetches Qt from download.qt.io itself (aqtinstall
-  can't read Qt 6.11's repository layout); add new Qt modules to its package list.
+  can't read Qt 6.11's repository layout); add new Qt modules to its package list. It also runs on
+  pushes to `main` (same paths as for pull requests) and weekly: GitHub only shares caches from
+  `main`, so without those runs every release rebuilds the vcpkg libraries for about 12 extra minutes.
 
 ## Building
 

@@ -111,10 +111,12 @@ Actions installer workflow downloads that file and fails if its hash no longer m
 Publishing a GitHub release builds the installer automatically
 (`.github/workflows/release-installer.yml`): on GitHub, Releases → Draft a new release, pick a tag
 such as `v1.2.0` and publish. The workflow builds the app with Qt 6.11 (Image Formats, Qt PDF),
-OpenEXR, libheif and LibRaw on Windows, and about 10 minutes later `OnionImageViewer-Setup-1.2.0.exe` is attached to
+OpenEXR, libheif and LibRaw on Windows, and about 5 minutes later (about 17 when the caches are cold) `OnionImageViewer-Setup-1.2.0.exe` is attached to
 the release. The tag (without the `v`) becomes the version everywhere: the About box, the .exe's
 file properties and the installer. It can also be run by hand from Actions → Release installer →
-Run workflow; that gives a test installer as a download on the run, with no release.
+Run workflow; that gives a test installer as a download on the run, with no release. The workflow
+also runs on pushes to `main` that touch the installer or its libraries and every Monday, so the
+Qt and vcpkg caches (which a release can only reuse from `main`) stay warm.
 
 ## Code layout
 
