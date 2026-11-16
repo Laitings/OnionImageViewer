@@ -83,7 +83,8 @@ void ImageViewport::setImage(const QImage &image, bool keepView)
         return;
     }
 
-    if (m_image.width() <= width() && m_image.height() <= height()) {
+    const bool fits = m_image.width() <= width() && m_image.height() <= height();
+    if (m_openZoom == OpenZoom::Actual || (m_openZoom == OpenZoom::Auto && fits)) {
         zoomActualSize();
     } else {
         fitToWindow();
@@ -496,6 +497,18 @@ void ImageViewport::wheelEvent(QWheelEvent *event)
     const QPoint angleDelta = event->angleDelta();
     if (angleDelta.y() == 0) {
         event->ignore();
+        return;
+    }
+
+    // With "wheel steps images" chosen in Preferences, the wheel steps and Ctrl + wheel zooms.
+    if (m_wheelSteps && !event->modifiers().testFlag(Qt::ControlModifier)) {
+        m_wheelRemainder += angleDelta.y();
+        const int notches = m_wheelRemainder / 120;
+        if (notches != 0) {
+            m_wheelRemainder -= notches * 120;
+            emit stepRequested(notches > 0 ? -1 : 1); // wheel up goes to the previous image
+        }
+        event->accept();
         return;
     }
 

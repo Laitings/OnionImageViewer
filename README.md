@@ -6,7 +6,8 @@ the full file metadata, and export what you see with the view burned in.
 
 ## Features
 
-- **Themes**: File > Preferences (Ctrl+,) has an Appearance page with Windows setting (follows Windows light or dark mode, also while the app runs), Light, Dark, Dark blue, Dark green, Dark red, Dark purple and Jamaican man (black, green and gold) and Rainbow (a rainbow band across the menu bar and toolbar). A theme is tried out as it is picked.
+- **Preferences** (File > Preferences, Ctrl+,): pages for Appearance, Viewer (alpha background, zoom when an image opens, what the mouse wheel does), Grid (view, thumbnail size, hidden files), Startup (open nothing, the last folder, a pinned folder or Pictures), Files (what to do when a paste or move hits an existing name), Formats (Ghostscript program with a Test button), Performance (thumbnail cache limit and Clear cache) and Updates (check on startup). Not offered, because the app has nothing for them yet: a default sort order (names are always sorted A to Z), a delete setting (the app has no Delete command), and EXR/DPX exposure and gamma.
+- **Themes**: the Appearance page with Windows setting (follows Windows light or dark mode, also while the app runs), Light, Dark, Dark blue, Dark green, Dark red, Dark purple and Jamaican man (black, green and gold) and Rainbow (a rainbow band across the menu bar and toolbar). A theme is tried out as it is picked.
 - **Formats**
   - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, TGA and more.
   - **WebP** `.webp`: through libwebp from vcpkg (linked statically), so it works without the Qt Image Formats add-on. Lossy, lossless and alpha; animated WebP plays like a GIF; embedded ICC profiles are converted to sRGB; Exif shows in the metadata panel. Optional at build time (without libwebp, Qt's WebP plugin is used if installed).
@@ -131,7 +132,9 @@ src/
   FolderTreePanel.*       folder panel on the left: Quick access pins and the drive tree
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
   Theme.*                 colour themes and the Windows light/dark follow (setting `appearance/theme`)
-  PreferencesDialog.*     Preferences window: sections list plus pages, one page (Appearance) so far
+  PreferencesDialog.*     Preferences window: a section list plus one page per group of settings
+  Preferences.h           the QSettings keys of the Preferences pages (and the hidden-files filter)
+  ThumbnailCache.*        the thumbnail cache folder: size, clear and prune to a limit
   FileItemDelegate.*      drawing of the Details and Tiles views
   FileOps.*               copy / cut / paste via the system clipboard, background file jobs
   BatchRename.*           batch renamer engine: pattern tokens, sequences, conflict checks, safe renames

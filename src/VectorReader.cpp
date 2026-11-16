@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -313,8 +315,27 @@ bool hasQtPdf()
 #endif
 }
 
+namespace {
+QMutex g_ghostscriptMutex;
+QString g_ghostscriptOverride;
+}
+
+void setGhostscriptOverride(const QString &path)
+{
+    const QMutexLocker locker(&g_ghostscriptMutex);
+    g_ghostscriptOverride = path.trimmed();
+}
+
 QString ghostscriptPath()
 {
+    QString override;
+    {
+        const QMutexLocker locker(&g_ghostscriptMutex); // read from thumbnail threads too
+        override = g_ghostscriptOverride;
+    }
+    if (!override.isEmpty() && QFileInfo::exists(override)) {
+        return override;
+    }
     static const QString path = [] {
 #ifdef Q_OS_WIN
         for (const QString &name : {QStringLiteral("gswin64c"), QStringLiteral("gswin32c")}) {

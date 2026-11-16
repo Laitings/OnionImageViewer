@@ -81,6 +81,11 @@ running the app on real files.
   sets for the chosen theme, and can change at run time. Never hard-code a dark or light colour in
   widget code; use `palette()` roles (icons already paint from `ButtonText`, and the image canvas
   from `Base`, pure black in light themes). New settings go on a page of `PreferencesDialog`.
+- Preferences: every key is a constant in `src/Preferences.h`. `PreferencesDialog` reads them when it
+  opens and writes them on OK (only the theme is tried live); `MainWindow::applyPreferences()` puts
+  them to work at startup and after OK, and `openStartupFolder()` handles Startup. Code that lists
+  folders adds `Preferences::hiddenFilter()` to its `QDir` filters. To add a preference: a constant,
+  a control on a page, its line in `accept()`, and its effect in `applyPreferences()`.
 - The scopes (`ScopesPanel`) get the viewed image from `MainWindow::updateScopes()`, which must be
   called wherever the viewed image or the color view changes (`showFrame`, `showGifFrame`,
   `refreshCurrentDisplay`); `showGrid()` clears them. Their "Display" source is the rendered

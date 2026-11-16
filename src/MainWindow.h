@@ -78,6 +78,11 @@ private:
     // Applies the saved colour theme (see Theme) and starts following the Windows setting.
     void applyTheme();
     void showPreferences();
+    // Puts the saved Preferences (see Preferences.h) to work: viewer behaviour, grid view and
+    // size, hidden files, the Ghostscript program and the thumbnail cache limit.
+    void applyPreferences();
+    // Opens the folder chosen under Preferences > Startup, if any.
+    void openStartupFolder();
     void loadSettings();
     void saveSettings();
     void openImage();
@@ -230,6 +235,7 @@ private:
     QActionGroup *m_channelGroup = nullptr;
     QAction *m_clippingAction = nullptr;
     QActionGroup *m_alphaBackgroundGroup = nullptr;
+    bool m_hiddenShown = false; // the "show hidden files" setting the grids were last filled with
     QAction *m_alphaButtonAction = nullptr; // toolbar entry; only visible for images with alpha
     QAction *m_fullScreenAction = nullptr;
     QAction *m_copyImageAction = nullptr;

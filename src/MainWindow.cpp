@@ -22,10 +22,12 @@
 #include "NameFilter.h"
 #include "PathBar.h"
 #include "PlayerBar.h"
+#include "Preferences.h"
 #include "PreferencesDialog.h"
 #include "Sequence.h"
 #include "SplitPane.h"
 #include "Theme.h"
+#include "ThumbnailCache.h"
 #include "UpdateChecker.h"
 
 #include <QAction>
@@ -372,10 +374,7 @@ QStringList supportedImageSuffixes()
 
 QString thumbnailCacheDirectory()
 {
-    const QString cacheDirectory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-        + QStringLiteral("/thumbnails");
-    QDir().mkpath(cacheDirectory);
-    return cacheDirectory;
+    return ThumbnailCache::directory();
 }
 
 QString thumbnailCachePath(const QFileInfo &fileInfo, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
@@ -641,6 +640,8 @@ MainWindow::MainWindow(QWidget *parent)
     createToolbar();
     createCentralLayout();
     loadSettings();
+    applyPreferences();
+    openStartupFolder();
     qApp->installEventFilter(this);
     setAcceptDrops(true);
 
@@ -674,7 +675,9 @@ MainWindow::MainWindow(QWidget *parent)
         });
         notice->show();
     }, Qt::SingleShotConnection);
-    QTimer::singleShot(0, m_updateChecker, &UpdateChecker::check);
+    if (QSettings().value(Preferences::CheckUpdatesOnStartup, true).toBool()) {
+        QTimer::singleShot(0, m_updateChecker, &UpdateChecker::check);
+    }
 }
 
 MainWindow::~MainWindow()
@@ -1573,6 +1576,13 @@ void MainWindow::createCentralLayout()
     m_viewerSplitter->setChildrenCollapsible(false);
     m_viewerSplitter->setHandleWidth(4);
     m_imageViewport = new ImageViewport(m_viewerSplitter);
+    connect(m_imageViewport, &ImageViewport::stepRequested, this, [this](int delta) {
+        if (delta > 0) {
+            showNextImage();
+        } else {
+            showPreviousImage();
+        }
+    });
     m_splitPane = new SplitPane(m_imageLoader, &loadThumbnailImage,
                                 [this](const QString &path) { return isImageFile(path); }, m_viewerSplitter);
     m_splitPane->hide();
@@ -1754,7 +1764,76 @@ void MainWindow::applyTheme()
 void MainWindow::showPreferences()
 {
     PreferencesDialog dialog(this);
-    dialog.exec();
+    if (dialog.exec() == QDialog::Accepted) {
+        applyPreferences();
+    }
+}
+
+void MainWindow::applyPreferences()
+{
+    const QSettings settings;
+
+    setAlphaBackground(settings.value(Preferences::AlphaBackground, int(ImageViewport::AlphaBackground::Checker)).toInt());
+
+    const QString zoom = settings.value(Preferences::OpenZoom, QStringLiteral("auto")).toString();
+    const ImageViewport::OpenZoom openZoom = zoom == QLatin1String("fit")      ? ImageViewport::OpenZoom::Fit
+                                             : zoom == QLatin1String("actual") ? ImageViewport::OpenZoom::Actual
+                                                                               : ImageViewport::OpenZoom::Auto;
+    const bool wheelSteps = settings.value(Preferences::WheelAction, QStringLiteral("zoom")).toString() == QLatin1String("step");
+    for (ImageViewport *viewport : {m_imageViewport, m_splitPane->viewport()}) {
+        viewport->setOpenZoom(openZoom);
+        viewport->setWheelStepsImages(wheelSteps);
+    }
+
+    // Grid view and thumbnail size: changed here, or already what the grid shows.
+    const QString viewKey = settings.value(Preferences::GridView, QStringLiteral("icons")).toString();
+    GridView view = GridView::Icons;
+    for (GridView candidate : {GridView::List, GridView::Details, GridView::Tiles}) {
+        if (viewKey == QLatin1String(gridViewKey(static_cast<int>(candidate)))) {
+            view = candidate;
+        }
+    }
+    const int size = qBound(MinThumbnailDisplaySize, settings.value(Preferences::ThumbnailSize, 128).toInt(), MaxThumbnailDisplaySize);
+    const int roundedSize = (size + ThumbnailDisplayStep / 2) / ThumbnailDisplayStep * ThumbnailDisplayStep;
+    if (view != m_gridView || (view == GridView::Icons && roundedSize != m_thumbnailDisplaySize)) {
+        setGridView(view, size);
+    }
+
+    // Hidden files: list the open folders again when the setting changed.
+    const bool hidden = settings.value(Preferences::ShowHidden, false).toBool();
+    if (hidden != m_hiddenShown) {
+        m_hiddenShown = hidden;
+        if (!m_currentFolderPath.isEmpty() && !isViewerVisible()) {
+            populateFileGrid(m_currentFolderPath, false);
+        }
+        if (!m_splitPane->folderPath().isEmpty()) {
+            m_splitPane->browse(m_splitPane->folderPath(), m_splitPane->currentPath());
+        }
+    }
+
+    Vector::setGhostscriptOverride(settings.value(Preferences::GhostscriptPath).toString());
+
+    const qint64 cacheLimit = qint64(settings.value(Preferences::ThumbnailCacheMb, 0).toInt()) * 1024 * 1024;
+    if (cacheLimit > 0) {
+        QThreadPool::globalInstance()->start([cacheLimit]() { ThumbnailCache::prune(cacheLimit); });
+    }
+}
+
+void MainWindow::openStartupFolder()
+{
+    const QSettings settings;
+    const QString mode = settings.value(Preferences::StartupFolder, QStringLiteral("none")).toString();
+    QString folder;
+    if (mode == QLatin1String("last")) {
+        folder = settings.value(Preferences::LastFolder).toString();
+    } else if (mode == QLatin1String("pinned")) {
+        folder = settings.value(Preferences::StartupPinned).toString();
+    } else if (mode == QLatin1String("pictures")) {
+        folder = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    }
+    if (!folder.isEmpty() && QDir(folder).exists()) {
+        populateFileGrid(folder, false);
+    }
 }
 
 void MainWindow::loadSettings()
@@ -3526,6 +3605,8 @@ void MainWindow::pasteFiles(const QString &targetFolder)
             }
             names.append(QFileInfo(items.at(index).target).fileName());
         }
+        // Preferences > Files can answer this in advance (the default is to ask).
+        const QString conflictChoice = QSettings().value(Preferences::PasteConflict, QStringLiteral("ask")).toString();
         QMessageBox box(this);
         box.setIcon(QMessageBox::Question);
         box.setWindowTitle(move ? QStringLiteral("Move") : QStringLiteral("Paste"));
@@ -3540,17 +3621,24 @@ void MainWindow::pasteFiles(const QString &targetFolder)
         QPushButton *keepBoth = box.addButton(QStringLiteral("Keep Both"), QMessageBox::AcceptRole);
         box.addButton(QMessageBox::Cancel);
         box.setDefaultButton(skip);
-        box.exec();
+        if (conflictChoice == QLatin1String("keepBoth")) {
+            box.setProperty("answer", QStringLiteral("keepBoth"));
+        } else if (conflictChoice == QLatin1String("skip")) {
+            box.setProperty("answer", QStringLiteral("skip"));
+        } else {
+            box.exec();
+        }
+        const QString answer = box.property("answer").toString();
         if (box.clickedButton() == replace) {
             for (int index : conflicts) {
                 items[index].replace = true;
             }
-        } else if (box.clickedButton() == keepBoth) {
+        } else if (box.clickedButton() == keepBoth || answer == QLatin1String("keepBoth")) {
             for (int index : conflicts) {
                 const QFileInfo info(items.at(index).source);
                 items[index].target = target.filePath(FileOps::keepBothName(targetFolder, info.fileName(), info.isDir()));
             }
-        } else if (box.clickedButton() == skip) {
+        } else if (box.clickedButton() == skip || answer == QLatin1String("skip")) {
             for (int i = conflicts.size() - 1; i >= 0; --i) {
                 items.removeAt(conflicts.at(i));
             }
@@ -4162,6 +4250,7 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     }
 
     m_currentFolderPath = folderPath;
+    QSettings().setValue(Preferences::LastFolder, folderPath);
     m_currentImagePaths.clear();
     m_currentImageIndex = -1;
     m_sequence.clear();
@@ -4183,7 +4272,7 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     // Windows 11 style), which made a 5000-file folder take over a minute to open.
     const QIcon imagePlaceholderIcon = style()->standardIcon(QStyle::SP_FileIcon);
     const QFileInfoList folders = folder.entryInfoList(
-        QDir::Dirs | QDir::NoDotAndDotDot,
+        QDir::Dirs | QDir::NoDotAndDotDot | Preferences::hiddenFilter(),
         QDir::Name | QDir::DirsFirst | QDir::IgnoreCase);
 
     for (const QFileInfo &folderInfo : folders) {
@@ -4197,7 +4286,7 @@ void MainWindow::populateFileGrid(const QString &folderPath, bool addToHistory)
     }
 
     const QFileInfoList files = folder.entryInfoList(
-        QDir::Files,
+        QDir::Files | Preferences::hiddenFilter(),
         QDir::Name | QDir::IgnoreCase);
 
     for (const QFileInfo &fileInfo : files) {
@@ -4391,7 +4480,7 @@ void MainWindow::setImageListFromFolder(const QString &folderPath)
     m_sequence.clear();
     m_sequencePositions.clear();
     const QFileInfoList files = folder.entryInfoList(
-        QDir::Files,
+        QDir::Files | Preferences::hiddenFilter(),
         QDir::Name | QDir::IgnoreCase);
 
     for (const QFileInfo &fileInfo : files) {
