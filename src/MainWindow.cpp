@@ -231,6 +231,7 @@ const int MaxRecentLuts = 8;
 const QString SettingsSplitterState = QStringLiteral("splitter/state");
 const QString SettingsSplitOrientation = QStringLiteral("viewer/splitOrientation");
 const QString SettingsSplitSync = QStringLiteral("viewer/splitSync");
+const QString SettingsAlphaBackground = QStringLiteral("viewer/alphaBackground");
 const QString SettingsPlaybackFps = QStringLiteral("playback/fps");
 const QString SettingsPlaybackLoop = QStringLiteral("playback/loop");
 const QString SettingsPlaybackRealTime = QStringLiteral("playback/realTime");
@@ -950,6 +951,31 @@ void MainWindow::createActions()
         }
     });
 
+    // What shows through transparent pixels; the toolbar drop-down offers the same choices.
+    m_alphaBackgroundGroup = new QActionGroup(this);
+    m_alphaBackgroundGroup->setExclusive(true);
+    const struct {
+        ImageViewport::AlphaBackground background;
+        const char *text;
+    } alphaBackgrounds[] = {
+        {ImageViewport::AlphaBackground::Checker, "Alpha (checkerboard)"},
+        {ImageViewport::AlphaBackground::Black, "Black"},
+        {ImageViewport::AlphaBackground::Grey, "Grey"},
+        {ImageViewport::AlphaBackground::White, "White"},
+    };
+    for (const auto &entry : alphaBackgrounds) {
+        auto *action = new QAction(QString::fromLatin1(entry.text), m_alphaBackgroundGroup);
+        action->setCheckable(true);
+        action->setData(int(entry.background));
+        action->setChecked(entry.background == ImageViewport::AlphaBackground::Checker);
+        connect(action, &QAction::triggered, this, [this, background = int(entry.background)]() {
+            setAlphaBackground(background);
+        });
+        connect(action, &QAction::hovered, this, [this, background = int(entry.background)]() {
+            previewAlphaBackground(background);
+        });
+    }
+
     // Split viewer: a second pane with its own file grid, to put any two images side by side.
     m_splitAction = new QAction(QStringLiteral("Split Viewer (V)"), this);
     m_splitAction->setCheckable(true);
@@ -1176,6 +1202,9 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     QMenu *channelMenu = viewMenu->addMenu(QStringLiteral("Channels"));
     channelMenu->addActions(m_channelGroup->actions());
+    QMenu *alphaMenu = viewMenu->addMenu(QStringLiteral("Alpha Background"));
+    alphaMenu->addActions(m_alphaBackgroundGroup->actions());
+    hookAlphaMenu(alphaMenu);
     viewMenu->addAction(m_clippingAction);
     viewMenu->addAction(m_fullScreenAction);
     viewMenu->addAction(m_metadataAction);
@@ -1369,6 +1398,18 @@ void MainWindow::createToolbar()
     m_colorButton->setToolTip(QStringLiteral("View transform / LUT"));
     toolbar->addWidget(m_colorButton);
     updateColorButton(m_view);
+
+    // Background behind transparent pixels; only shown while the viewed image has alpha.
+    auto *alphaMenu = new QMenu(toolbar);
+    alphaMenu->addActions(m_alphaBackgroundGroup->actions());
+    hookAlphaMenu(alphaMenu);
+    auto *alphaButton = new QToolButton(toolbar);
+    alphaButton->setMenu(alphaMenu);
+    alphaButton->setPopupMode(QToolButton::InstantPopup);
+    alphaButton->setText(QStringLiteral("Alpha"));
+    alphaButton->setToolTip(QStringLiteral("Background behind transparent pixels"));
+    m_alphaButtonAction = toolbar->addWidget(alphaButton);
+    m_alphaButtonAction->setVisible(false);
 }
 
 void MainWindow::updateColorButton(ColorTransform::View view)
@@ -1530,6 +1571,8 @@ void MainWindow::createCentralLayout()
     m_splitPane = new SplitPane(m_imageLoader, &loadThumbnailImage,
                                 [this](const QString &path) { return isImageFile(path); }, m_viewerSplitter);
     m_splitPane->hide();
+    connect(m_imageViewport, &ImageViewport::alphaPresenceChanged, this, &MainWindow::updateAlphaButton);
+    connect(m_splitPane->viewport(), &ImageViewport::alphaPresenceChanged, this, &MainWindow::updateAlphaButton);
     m_viewerSplitter->addWidget(m_imageViewport);
     m_viewerSplitter->addWidget(m_splitPane);
     imageLayout->addWidget(m_viewerSplitter, 0, 0);
@@ -1787,6 +1830,7 @@ void MainWindow::loadSettings()
     setSplitOrientation(settings.value(SettingsSplitOrientation).toString() == QLatin1String("vertical")
                             ? Qt::Vertical : Qt::Horizontal);
     m_splitSyncAction->setChecked(settings.value(SettingsSplitSync, true).toBool());
+    setAlphaBackground(settings.value(SettingsAlphaBackground, int(ImageViewport::AlphaBackground::Checker)).toInt());
     updateLutActions();
     updateViewTransformActions();
     updateInputActions();
@@ -1839,6 +1883,7 @@ void MainWindow::openImagePath(const QString &filePath)
     m_freshOpen = true; // fit the first image; keep zoom and position while stepping after that
     m_displayedIndex = -1;
     m_contentStack->setCurrentWidget(m_imagePage);
+    updateAlphaButton();
     goToImage(index);
 }
 
@@ -1998,6 +2043,7 @@ void MainWindow::showFrame(const FrameLoader::Frame &frame, bool requested)
     }
     scheduleMetadata();
     m_imageViewport->setImage(frame.display, !m_freshOpen);
+    updateAlphaButton();
     m_freshOpen = false;
 
     const QString number = frameNumberOf(frame.path);
@@ -2618,6 +2664,49 @@ void MainWindow::setChannel(int channel, bool toggle)
     m_splitPane->viewport()->setChannel(wanted);
     for (QAction *action : m_channelGroup->actions()) {
         action->setChecked(action->data().toInt() == int(wanted));
+    }
+}
+
+void MainWindow::setAlphaBackground(int background)
+{
+    auto wanted = static_cast<ImageViewport::AlphaBackground>(background);
+    if (background < int(ImageViewport::AlphaBackground::Checker) || background > int(ImageViewport::AlphaBackground::White)) {
+        wanted = ImageViewport::AlphaBackground::Checker;
+    }
+    m_imageViewport->setAlphaBackground(wanted);
+    m_splitPane->viewport()->setAlphaBackground(wanted);
+    for (QAction *action : m_alphaBackgroundGroup->actions()) {
+        action->setChecked(action->data().toInt() == int(wanted));
+    }
+    QSettings().setValue(SettingsAlphaBackground, int(wanted));
+}
+
+void MainWindow::previewAlphaBackground(int background)
+{
+    const auto wanted = static_cast<ImageViewport::AlphaBackground>(background);
+    m_imageViewport->setAlphaBackground(wanted);
+    m_splitPane->viewport()->setAlphaBackground(wanted);
+}
+
+void MainWindow::hookAlphaMenu(QMenu *menu)
+{
+    connect(menu, &QMenu::aboutToHide, this, [this]() {
+        // Runs after a pick has been applied too, so the checked entry is always the one to show.
+        for (QAction *action : m_alphaBackgroundGroup->actions()) {
+            if (action->isChecked()) {
+                previewAlphaBackground(action->data().toInt());
+                break;
+            }
+        }
+    });
+}
+
+void MainWindow::updateAlphaButton()
+{
+    if (m_alphaButtonAction) {
+        m_alphaButtonAction->setVisible(isViewerVisible()
+                                        && (m_imageViewport->hasAlpha()
+                                            || (!m_splitPane->isHidden() && m_splitPane->viewport()->hasAlpha())));
     }
 }
 
@@ -4237,6 +4326,7 @@ void MainWindow::showGrid()
     scheduleMetadata();
     updateImageInfo();
     updateColorButton(m_view);
+    updateAlphaButton();
     // Keep the grid on the image that was being viewed.
     if (m_currentImageIndex >= 0 && m_currentImageIndex < m_currentImagePaths.size()) {
         if (QListWidgetItem *item = m_thumbnailItems.value(m_currentImagePaths.at(m_currentImageIndex));
@@ -4469,6 +4559,7 @@ void MainWindow::setSplitEnabled(bool enabled)
         m_imageViewport->setHighlighted(false);
         layoutSplitHeader();
         updateImageInfo();
+        updateAlphaButton();
         return;
     }
     // Start in the folder of the image being viewed, with that image selected.
@@ -4484,6 +4575,7 @@ void MainWindow::setSplitEnabled(bool enabled)
     if (!isViewerVisible() && !m_currentImagePath.isEmpty()) {
         m_contentStack->setCurrentWidget(m_imagePage);
     }
+    updateAlphaButton();
     setSplitPaneActive(true);
     QTimer::singleShot(0, this, &MainWindow::layoutOverlayButtons);
     layoutSplitHeader();

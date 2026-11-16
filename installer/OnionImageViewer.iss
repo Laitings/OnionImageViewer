@@ -19,6 +19,10 @@
 #define AppName "Onion Image Viewer"
 #define AppExe "OnionImageViewer.exe"
 #define ProgId "OnionImageViewer.Image"
+; Official Ghostscript 10.08.0 installer (AGPL) from Artifex, checked against its SHA-256 before it runs.
+#define GsFile "gs10080w64.exe"
+#define GsUrl "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/gs10080w64.exe"
+#define GsSha256 "52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50"
 
 [Setup]
 ; The AppId identifies the app for upgrades and uninstall. Never change it.
@@ -100,4 +104,130 @@ Root: HKA; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".webp"; ValueData: ""; Tasks: openwith
 
 [Run]
+Filename: "{tmp}\{#GsFile}"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Flags: shellexec waituntilterminated skipifdoesntexist; Verb: "runas"; Check: GhostscriptDownloaded
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  GsPage: TWizardPage;
+  GsCheck: TNewCheckBox;
+  GsDownloadPage: TDownloadWizardPage;
+  GsDownloaded: Boolean;
+
+// True when a Ghostscript program is really there: on the PATH or in a default install folder.
+// The registry is not used: Ghostscript's uninstaller leaves an empty "GPL Ghostscript" key behind.
+function GhostscriptInGsFolder(const Root: String): Boolean;
+var
+  FindRec: TFindRec;
+  Bin: String;
+begin
+  Result := False;
+  if FindFirst(Root + '\gs\gs*', FindRec) then
+  begin
+    try
+      repeat
+        Bin := Root + '\gs\' + FindRec.Name + '\bin\';
+        if FileExists(Bin + 'gswin64c.exe') or FileExists(Bin + 'gswin32c.exe') then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function GhostscriptInstalled: Boolean;
+begin
+  Result := (FileSearch('gswin64c.exe', GetEnv('PATH')) <> '')
+         or (FileSearch('gswin32c.exe', GetEnv('PATH')) <> '')
+         or GhostscriptInGsFolder(ExpandConstant('{commonpf64}'))
+         or GhostscriptInGsFolder(ExpandConstant('{commonpf32}'));
+end;
+
+function GhostscriptMissing: Boolean;
+begin
+  Result := not GhostscriptInstalled;
+end;
+
+function GhostscriptDownloaded: Boolean;
+begin
+  Result := GsDownloaded;
+end;
+
+// Ghostscript draws EPS files. It is a separate, free program, so it is offered on a page of its own
+// (only when it isn't installed yet) instead of being bundled.
+procedure InitializeWizard;
+var
+  Info: TNewStaticText;
+begin
+  GsPage := CreateCustomPage(wpSelectTasks, 'Optional: Ghostscript', 'Needed only to view EPS files');
+  Info := TNewStaticText.Create(GsPage);
+  Info.Parent := GsPage.Surface;
+  Info.WordWrap := True;
+  Info.AutoSize := True;
+  Info.Width := GsPage.SurfaceWidth;
+  Info.Caption :=
+    'EPS (Encapsulated PostScript) is an older vector graphics format used for logos and illustrations '
+    + 'from design programs such as Adobe Illustrator.' + #13#10#13#10
+    + 'Onion Image Viewer needs a free program called Ghostscript to draw EPS files, and it is not '
+    + 'installed on this PC. Without it, an EPS file only shows its embedded preview, if it has one.'
+    + #13#10#13#10
+    + 'Ghostscript is about 65 MB, and installing it asks for administrator approval.';
+  GsCheck := TNewCheckBox.Create(GsPage);
+  GsCheck.Parent := GsPage.Surface;
+  GsCheck.Top := Info.Top + Info.Height + ScaleY(16);
+  GsCheck.Width := GsPage.SurfaceWidth;
+  GsCheck.Caption := 'Download and install Ghostscript';
+  GsDownloadPage := CreateDownloadPage('Downloading Ghostscript',
+    'Ghostscript lets Onion Image Viewer draw EPS files.', nil);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = GsPage.ID) and not GhostscriptMissing;
+end;
+
+// Downloads the Ghostscript installer before the files are copied. A failed download only skips
+// Ghostscript: the app itself still installs.
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpReady) and GsCheck.Checked and GhostscriptMissing then
+  begin
+    GsDownloadPage.Clear;
+    GsDownloadPage.Add('{#GsUrl}', '{#GsFile}', '{#GsSha256}');
+    GsDownloadPage.Show;
+    try
+      try
+        GsDownloadPage.Download;
+        GsDownloaded := True;
+      except
+        if not GsDownloadPage.AbortedByUser then
+          SuppressibleMsgBox('Ghostscript could not be downloaded, so it will be skipped. '
+            + 'You can install it later from ghostscript.com.' + #13#10#13#10 + GetExceptionMessage,
+            mbError, MB_OK, IDOK);
+      end;
+    finally
+      GsDownloadPage.Hide;
+    end;
+  end;
+end;
+
+// Lists the Ghostscript download on the "Ready to Install" page, next to the tasks.
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo,
+  MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := '';
+  if MemoDirInfo <> '' then
+    Result := Result + MemoDirInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then
+    Result := Result + MemoGroupInfo + NewLine + NewLine;
+  if MemoTasksInfo <> '' then
+    Result := Result + MemoTasksInfo + NewLine + NewLine;
+  if GsCheck.Checked and GhostscriptMissing then
+    Result := Result + 'Ghostscript (for EPS files):' + NewLine
+      + Space + 'Download (about 65 MB) and install Ghostscript' + NewLine;
+end;
