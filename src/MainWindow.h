@@ -75,7 +75,9 @@ private:
     void createMenus();
     void createToolbar();
     void createCentralLayout();
-    void applyDarkPalette();
+    // Applies the saved colour theme (see Theme) and starts following the Windows setting.
+    void applyTheme();
+    void showPreferences();
     void loadSettings();
     void saveSettings();
     void openImage();

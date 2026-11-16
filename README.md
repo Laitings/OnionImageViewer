@@ -6,6 +6,7 @@ the full file metadata, and export what you see with the view burned in.
 
 ## Features
 
+- **Themes**: File > Preferences (Ctrl+,) has an Appearance page with Windows setting (follows Windows light or dark mode, also while the app runs), Light, Dark, Dark blue, Dark green, Dark red, Dark purple and Jamaican man (black, green and gold). A theme is tried out as it is picked.
 - **Formats**
   - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, TGA and more.
   - **WebP** `.webp`: through libwebp from vcpkg (linked statically), so it works without the Qt Image Formats add-on. Lossy, lossless and alpha; animated WebP plays like a GIF; embedded ICC profiles are converted to sRGB; Exif shows in the metadata panel. Optional at build time (without libwebp, Qt's WebP plugin is used if installed).
@@ -129,6 +130,8 @@ src/
                           shortcuts, export, settings (the biggest file)
   FolderTreePanel.*       folder panel on the left: Quick access pins and the drive tree
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
+  Theme.*                 colour themes and the Windows light/dark follow (setting `appearance/theme`)
+  PreferencesDialog.*     Preferences window: sections list plus pages, one page (Appearance) so far
   FileItemDelegate.*      drawing of the Details and Tiles views
   FileOps.*               copy / cut / paste via the system clipboard, background file jobs
   BatchRename.*           batch renamer engine: pattern tokens, sequences, conflict checks, safe renames
