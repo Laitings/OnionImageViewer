@@ -330,14 +330,8 @@ QString SplitPane::infoText() const
 void SplitPane::setActive(bool active)
 {
     m_active = active;
+    // Only the canvas gets the accent frame, the same as the main pane; the header keeps its colour.
     m_viewport->setHighlighted(active);
-    QPalette headerPalette = palette();
-    if (active) {
-        QColor accent = palette().color(QPalette::Highlight);
-        accent.setAlpha(110);
-        headerPalette.setColor(QPalette::Window, accent);
-    }
-    m_header->setPalette(headerPalette);
 }
 
 void SplitPane::focusContent()

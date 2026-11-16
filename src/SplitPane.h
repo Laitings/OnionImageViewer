@@ -74,7 +74,7 @@ public:
     // One line for the status bar: name, size, position in the folder (or the folder's count).
     QString infoText() const;
 
-    // Marks the pane as the one keys go to, with an accent frame and header.
+    // Marks the pane as the one keys go to, with an accent frame around its canvas.
     void setActive(bool active);
     // Gives keyboard focus to the grid or the viewport, whichever is shown.
     void focusContent();
