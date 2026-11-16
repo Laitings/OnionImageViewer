@@ -19,7 +19,11 @@ endif()
 # statically, and the LGPL libraries libheif, libde265 and LibRaw as DLLs next to the .exe.
 # Build folders configured before HEIF support used x64-windows-static-md; they are switched over.
 if(CMAKE_HOST_WIN32)
-    set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE STRING "vcpkg overlay triplets")
+    # An empty cached value (a build folder configured before this line existed) is filled in too,
+    # otherwise vcpkg fails with "Invalid triplet: x64-windows-onion".
+    if(NOT VCPKG_OVERLAY_TRIPLETS)
+        set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE STRING "vcpkg overlay triplets" FORCE)
+    endif()
     if(NOT DEFINED VCPKG_TARGET_TRIPLET OR VCPKG_TARGET_TRIPLET STREQUAL "x64-windows-static-md")
         set(VCPKG_TARGET_TRIPLET "x64-windows-onion" CACHE STRING "vcpkg triplet" FORCE)
     endif()
