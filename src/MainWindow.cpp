@@ -4608,7 +4608,14 @@ void MainWindow::setSplitPaneActive(bool active)
     m_splitPane->setActive(active);
     m_imageViewport->setHighlighted(split && !active);
     if (active) {
-        m_splitPane->focusContent();
+        // A click on the pane's search field has already focused it (before this filter ran): leave
+        // it there instead of moving focus to the pane's grid or viewport, which made it need two clicks.
+        QWidget *focused = QApplication::focusWidget();
+        const bool typing = qobject_cast<QLineEdit *>(focused)
+            && (m_splitPane->isAncestorOf(focused) || m_splitPane->header()->isAncestorOf(focused));
+        if (!typing) {
+            m_splitPane->focusContent();
+        }
     } else if (split && QApplication::focusWidget() && m_splitPane->isAncestorOf(QApplication::focusWidget())) {
         m_imageViewport->setFocus(Qt::OtherFocusReason);
     }
