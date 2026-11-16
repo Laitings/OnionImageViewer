@@ -19,6 +19,10 @@
 #define AppName "Onion Image Viewer"
 #define AppExe "OnionImageViewer.exe"
 #define ProgId "OnionImageViewer.Image"
+; Official Ghostscript 10.08.0 installer (AGPL) from Artifex, checked against its SHA-256 before it runs.
+#define GsFile "gs10080w64.exe"
+#define GsUrl "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/gs10080w64.exe"
+#define GsSha256 "52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50"
 
 [Setup]
 ; The AppId identifies the app for upgrades and uninstall. Never change it.
@@ -54,6 +58,9 @@ VersionInfoDescription={#AppName} Setup
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "openwith"; Description: "Add {#AppName} to ""Open with"" for EXR, DPX, TIFF and other images"; GroupDescription: "Explorer:"
+; Ghostscript draws EPS files. It is a separate, free program, so it is offered rather than bundled,
+; and only when it isn't installed yet. See the [Code] section.
+Name: "installgs"; Description: "Download and install Ghostscript (about 65 MB, needs administrator approval). Onion Image Viewer uses it to draw EPS files; without it an EPS shows only its embedded preview, if it has one"; GroupDescription: "Optional extra:"; Flags: unchecked; Check: GhostscriptMissing
 
 [InstallDelete]
 ; Clear out files from an older version (Qt plugins and LUTs can change between versions).
@@ -100,4 +107,71 @@ Root: HKA; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}\SupportedTypes"; ValueType: string; ValueName: ".webp"; ValueData: ""; Tasks: openwith
 
 [Run]
+Filename: "{tmp}\{#GsFile}"; Parameters: "/S"; StatusMsg: "Installing Ghostscript..."; Flags: shellexec waituntilterminated skipifdoesntexist; Verb: "runas"; Check: GhostscriptDownloaded
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  GsDownloadPage: TDownloadWizardPage;
+  GsDownloaded: Boolean;
+
+// True when Ghostscript is already there: its registry keys, its default install folder or the PATH.
+function GhostscriptInstalled: Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := RegKeyExists(HKLM64, 'SOFTWARE\Artifex\GPL Ghostscript')
+         or RegKeyExists(HKLM32, 'SOFTWARE\Artifex\GPL Ghostscript')
+         or (FileSearch('gswin64c.exe', GetEnv('PATH')) <> '')
+         or (FileSearch('gswin32c.exe', GetEnv('PATH')) <> '');
+  if not Result then
+  begin
+    if FindFirst(ExpandConstant('{commonpf64}\gs\gs*'), FindRec) then
+    begin
+      Result := True;
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function GhostscriptMissing: Boolean;
+begin
+  Result := not GhostscriptInstalled;
+end;
+
+function GhostscriptDownloaded: Boolean;
+begin
+  Result := GsDownloaded;
+end;
+
+procedure InitializeWizard;
+begin
+  GsDownloadPage := CreateDownloadPage('Downloading Ghostscript',
+    'Ghostscript lets Onion Image Viewer draw EPS files.', nil);
+end;
+
+// Downloads the Ghostscript installer before the files are copied. A failed download only skips
+// Ghostscript: the app itself still installs.
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpReady) and WizardIsTaskSelected('installgs') then
+  begin
+    GsDownloadPage.Clear;
+    GsDownloadPage.Add('{#GsUrl}', '{#GsFile}', '{#GsSha256}');
+    GsDownloadPage.Show;
+    try
+      try
+        GsDownloadPage.Download;
+        GsDownloaded := True;
+      except
+        if not GsDownloadPage.AbortedByUser then
+          SuppressibleMsgBox('Ghostscript could not be downloaded, so it will be skipped. '
+            + 'You can install it later from ghostscript.com.' + #13#10#13#10 + GetExceptionMessage,
+            mbError, MB_OK, IDOK);
+      end;
+    finally
+      GsDownloadPage.Hide;
+    end;
+  end;
+end;
