@@ -356,11 +356,14 @@ void ImageViewport::matchView(const ImageViewport &other)
 
 void ImageViewport::paintImage(QPainter &painter, QPaintEvent *event)
 {
-    // The canvas follows the theme (the Base colour of the palette).
-    painter.fillRect(event->rect(), palette().color(QPalette::Base));
+    // The canvas follows the theme (the Base colour of the palette), except that a light theme gets
+    // pure black, so pictures are not judged against a white surround.
+    const QColor base = palette().color(QPalette::Base);
+    const bool lightTheme = base.lightness() > 128;
+    painter.fillRect(event->rect(), lightTheme ? QColor(Qt::black) : base);
 
     if (m_image.isNull()) {
-        painter.setPen(palette().color(QPalette::PlaceholderText));
+        painter.setPen(lightTheme ? QColor(150, 150, 150) : palette().color(QPalette::PlaceholderText));
         painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("Open an image to view it"));
         return;
     }

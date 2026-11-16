@@ -80,7 +80,7 @@ running the app on real files.
 - Colours: widgets take them from the application palette, which `Theme::apply()` (`src/Theme.*`)
   sets for the chosen theme, and can change at run time. Never hard-code a dark or light colour in
   widget code; use `palette()` roles (icons already paint from `ButtonText`, and the image canvas
-  from `Base`). New settings go on a page of `PreferencesDialog`.
+  from `Base`, pure black in light themes). New settings go on a page of `PreferencesDialog`.
 - The scopes (`ScopesPanel`) get the viewed image from `MainWindow::updateScopes()`, which must be
   called wherever the viewed image or the color view changes (`showFrame`, `showGifFrame`,
   `refreshCurrentDisplay`); `showGrid()` clears them. Their "Display" source is the rendered
