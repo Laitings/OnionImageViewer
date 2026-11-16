@@ -4,12 +4,27 @@
 # installer's version: tag v1.2.0 gives OnionImageViewer-Setup-1.2.0.exe on that release.
 # It can also be started by hand (Actions > Release installer > Run workflow), and it runs on pull
 # requests that touch the installer; those runs keep the setup .exe as a workflow artifact only.
+#
+# It also runs on pushes to main that touch the installer or its libraries, and once a week. That
+# is mostly to fill the Qt and vcpkg caches: GitHub only lets a release or pull request run reuse
+# caches saved on main, and drops a cache nobody used for 7 days. Without these runs a release
+# compiles libheif, LibRaw and OpenEXR from source every time (about 17 minutes instead of 5).
 name: Release installer
 
 on:
   release:
     types: [published]
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC, keeps the caches from expiring
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-installer.yml
+      - installer/**
+      - resources/luts/**
+      - vcpkg.json
+      - triplets/**
   pull_request:
     paths:
       - .github/workflows/release-installer.yml
