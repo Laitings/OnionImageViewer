@@ -115,23 +115,37 @@ var
   GsDownloadPage: TDownloadWizardPage;
   GsDownloaded: Boolean;
 
-// True when Ghostscript is already there: its registry keys, its default install folder or the PATH.
-function GhostscriptInstalled: Boolean;
+// True when a Ghostscript program is really there: on the PATH or in a default install folder.
+// The registry is not used: Ghostscript's uninstaller leaves an empty "GPL Ghostscript" key behind.
+function GhostscriptInGsFolder(const Root: String): Boolean;
 var
   FindRec: TFindRec;
+  Bin: String;
 begin
-  Result := RegKeyExists(HKLM64, 'SOFTWARE\Artifex\GPL Ghostscript')
-         or RegKeyExists(HKLM32, 'SOFTWARE\Artifex\GPL Ghostscript')
-         or (FileSearch('gswin64c.exe', GetEnv('PATH')) <> '')
-         or (FileSearch('gswin32c.exe', GetEnv('PATH')) <> '');
-  if not Result then
+  Result := False;
+  if FindFirst(Root + '\gs\gs*', FindRec) then
   begin
-    if FindFirst(ExpandConstant('{commonpf64}\gs\gs*'), FindRec) then
-    begin
-      Result := True;
+    try
+      repeat
+        Bin := Root + '\gs\' + FindRec.Name + '\bin\';
+        if FileExists(Bin + 'gswin64c.exe') or FileExists(Bin + 'gswin32c.exe') then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not FindNext(FindRec);
+    finally
       FindClose(FindRec);
     end;
   end;
+end;
+
+function GhostscriptInstalled: Boolean;
+begin
+  Result := (FileSearch('gswin64c.exe', GetEnv('PATH')) <> '')
+         or (FileSearch('gswin32c.exe', GetEnv('PATH')) <> '')
+         or GhostscriptInGsFolder(ExpandConstant('{commonpf64}'))
+         or GhostscriptInGsFolder(ExpandConstant('{commonpf32}'));
 end;
 
 function GhostscriptMissing: Boolean;
