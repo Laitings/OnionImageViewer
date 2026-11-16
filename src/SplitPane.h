@@ -17,6 +17,7 @@
 
 class ImageLoader;
 class ImageViewport;
+class OverlayButton;
 class PathBar;
 class QKeyEvent;
 class QLineEdit;
@@ -105,6 +106,8 @@ private:
     // Hides grid items whose names don't match the pane's search field (same rules as the main
     // grid's search: plain text anywhere in the name, or wildcards like *.psd;*.tif).
     void applySearch();
+    // Places the close / previous / next buttons over the pane's viewport (like the main viewer's).
+    void layoutOverlayButtons();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -121,6 +124,9 @@ private:
     QToolButton *m_browseButton = nullptr;
     QToolButton *m_closeButton = nullptr;
     QStackedWidget *m_stack = nullptr;
+    OverlayButton *m_closeImageButton = nullptr;
+    OverlayButton *m_previousImageButton = nullptr;
+    OverlayButton *m_nextImageButton = nullptr;
     QListWidget *m_grid = nullptr;
     ImageViewport *m_viewport = nullptr;
     QIcon m_folderIcon;

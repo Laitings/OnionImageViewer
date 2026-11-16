@@ -4,6 +4,7 @@
 #include "ImageLoader.h"
 #include "ImageViewport.h"
 #include "NameFilter.h"
+#include "OverlayButton.h"
 #include "PathBar.h"
 
 #include <QDir>
@@ -104,6 +105,29 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     m_grid->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_grid->verticalScrollBar()->setSingleStep(IconDisplaySize / 2);
     m_viewport = new ImageViewport(m_stack);
+    // The same floating close / previous / next buttons as the main viewer, over this pane's image.
+    m_closeImageButton = new OverlayButton(OverlayButton::Icon::Close, m_viewport);
+    m_previousImageButton = new OverlayButton(OverlayButton::Icon::Previous, m_viewport);
+    m_nextImageButton = new OverlayButton(OverlayButton::Icon::Next, m_viewport);
+    m_closeImageButton->setToolTip(QStringLiteral("Back to the folder (Esc)"));
+    m_previousImageButton->setToolTip(QStringLiteral("Previous image (Left)"));
+    m_nextImageButton->setToolTip(QStringLiteral("Next image (Right)"));
+    m_viewport->installEventFilter(this);
+    connect(m_closeImageButton, &OverlayButton::clicked, this, [this]() {
+        showBrowser();
+        focusContent();
+    });
+    connect(m_previousImageButton, &OverlayButton::clicked, this, [this]() {
+        if (m_index > 0) {
+            showImage(m_index - 1, false);
+        }
+    });
+    connect(m_nextImageButton, &OverlayButton::clicked, this, [this]() {
+        if (m_index >= 0) {
+            showImage(m_index + 1, false);
+        }
+    });
+    layoutOverlayButtons();
     m_stack->addWidget(m_grid);
     m_stack->addWidget(m_viewport);
     layout->addWidget(m_stack, 1);
@@ -265,8 +289,27 @@ void SplitPane::applySearch()
     m_thumbnailTimer.start();
 }
 
+void SplitPane::layoutOverlayButtons()
+{
+    const int margin = 12;
+    const QSize size = m_viewport->size();
+    m_closeImageButton->move(size.width() - margin - m_closeImageButton->width(), margin);
+    m_previousImageButton->move(margin, (size.height() - m_previousImageButton->height()) / 2);
+    m_nextImageButton->move(size.width() - margin - m_nextImageButton->width(),
+                            (size.height() - m_nextImageButton->height()) / 2);
+}
+
 bool SplitPane::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_viewport) {
+        if (event->type() == QEvent::Resize) {
+            layoutOverlayButtons();
+        } else if (event->type() == QEvent::MouseMove) {
+            for (OverlayButton *button : {m_closeImageButton, m_previousImageButton, m_nextImageButton}) {
+                button->reveal();
+            }
+        }
+    }
     if (watched == m_search && event->type() == QEvent::KeyPress) {
         const int key = static_cast<QKeyEvent *>(event)->key();
         if (key == Qt::Key_Escape) {
