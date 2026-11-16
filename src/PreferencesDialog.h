@@ -56,6 +56,7 @@ private:
 
     QComboBox *m_startupCombo = nullptr;
     QComboBox *m_startupPinnedCombo = nullptr;
+    QComboBox *m_openInCombo = nullptr;
 
     QComboBox *m_conflictCombo = nullptr;
 

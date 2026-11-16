@@ -221,8 +221,16 @@ QWidget *PreferencesDialog::createStartupPage()
     connect(m_startupCombo, &QComboBox::currentIndexChanged, this, updatePinned);
     updatePinned();
 
+    m_openInCombo = new QComboBox(parts.page);
+    m_openInCombo->addItem(QStringLiteral("Open it in a new window"), false);
+    m_openInCombo->addItem(QStringLiteral("Show it in the window that is already open"), true);
+    selectData(m_openInCombo, settings.value(Preferences::OpenInExistingWindow, false).toBool());
+    parts.form->addRow(QStringLiteral("An image opened from Explorer:"), m_openInCombo);
+
     parts.layout->addWidget(note(parts.page, QStringLiteral("Pin folders from the folder panel's Quick access. "
-                                                            "Opening an image from Explorer always shows that image.")));
+                                                            "Opening an image from Explorer always shows that image. "
+                                                            "\"The window that is already open\" only applies when one is "
+                                                            "running; otherwise a new window opens.")));
     parts.layout->addStretch(1);
     return parts.page;
 }
@@ -374,6 +382,7 @@ void PreferencesDialog::accept()
     settings.setValue(Preferences::ShowHidden, m_showHidden->isChecked());
     settings.setValue(Preferences::StartupFolder, m_startupCombo->currentData().toString());
     settings.setValue(Preferences::StartupPinned, m_startupPinnedCombo->currentData().toString());
+    settings.setValue(Preferences::OpenInExistingWindow, m_openInCombo->currentData().toBool());
     settings.setValue(Preferences::PasteConflict, m_conflictCombo->currentData().toString());
     settings.setValue(Preferences::GhostscriptPath, m_ghostscriptPath->text().trimmed());
     settings.setValue(Preferences::ThumbnailCacheMb, m_cacheLimit->value());

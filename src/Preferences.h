@@ -30,6 +30,7 @@ inline QDir::Filters hiddenFilter()
 inline const QString StartupFolder = QStringLiteral("startup/folder");       // "none", "last", "pinned" or "pictures"
 inline const QString StartupPinned = QStringLiteral("startup/pinnedFolder"); // a folder, for "pinned"
 inline const QString LastFolder = QStringLiteral("startup/lastFolder");      // kept up to date for "last"
+inline const QString OpenInExistingWindow = QStringLiteral("startup/openInExistingWindow"); // bool, default false: a new window
 
 // Files
 inline const QString PasteConflict = QStringLiteral("files/pasteConflict"); // "ask", "keepBoth" or "skip"

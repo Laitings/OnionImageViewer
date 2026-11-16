@@ -23,6 +23,7 @@
 #include "PathBar.h"
 #include "PlayerBar.h"
 #include "Preferences.h"
+#include "SingleInstance.h"
 #include "PreferencesDialog.h"
 #include "Sequence.h"
 #include "SplitPane.h"
@@ -75,6 +76,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QPalette>
 #include <QPainter>
 #include <QPixmap>
@@ -642,6 +645,7 @@ MainWindow::MainWindow(QWidget *parent)
     loadSettings();
     applyPreferences();
     openStartupFolder();
+    startInstanceServer();
     qApp->installEventFilter(this);
     setAcceptDrops(true);
 
@@ -1817,6 +1821,40 @@ void MainWindow::applyPreferences()
     if (cacheLimit > 0) {
         QThreadPool::globalInstance()->start([cacheLimit]() { ThumbnailCache::prune(cacheLimit); });
     }
+}
+
+void MainWindow::startInstanceServer()
+{
+    m_instanceServer = new QLocalServer(this);
+    m_instanceServer->setSocketOptions(QLocalServer::UserAccessOption);
+    // Fails quietly when another window already owns the name: that one receives the files.
+    if (!m_instanceServer->listen(SingleInstance::serverName())) {
+        return;
+    }
+    connect(m_instanceServer, &QLocalServer::newConnection, this, [this]() {
+        while (QLocalSocket *socket = m_instanceServer->nextPendingConnection()) {
+            connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+            connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
+                while (socket->canReadLine()) {
+                    const QString path = QString::fromUtf8(socket->readLine()).trimmed();
+                    if (!path.isEmpty()) {
+                        bringToFront();
+                        openPath(path);
+                    }
+                }
+            });
+        }
+    });
+}
+
+void MainWindow::bringToFront()
+{
+    if (isMinimized()) {
+        setWindowState(windowState() & ~Qt::WindowMinimized);
+    }
+    show();
+    raise();
+    activateWindow();
 }
 
 void MainWindow::openStartupFolder()

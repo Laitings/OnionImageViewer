@@ -93,6 +93,8 @@ qt_add_executable(OnionImageViewer
     src/PathBar.h
     src/PathBar.cpp
     src/Preferences.h
+    src/SingleInstance.h
+    src/SingleInstance.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
     src/Theme.h

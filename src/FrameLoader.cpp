@@ -7,6 +7,10 @@
 #include <QImageReader>
 #include <QMetaObject>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include <utility>
 
 namespace {
@@ -96,8 +100,19 @@ FrameLoader::FrameLoader(std::shared_ptr<const ImageLoader> loader, QObject *par
     qRegisterMetaType<FrameLoader::Frame>("FrameLoader::Frame");
     m_pool.setMaxThreadCount(qBound(2, QThread::idealThreadCount() / 4, 4));
     // Enough for a handful of 4.6K half-float frames (source + display ~175 MB each), or a
-    // few dozen 2K DPX frames.
+    // few dozen 2K DPX frames. On a 64-bit PC with plenty of memory it grows to an eighth of it
+    // (at most 8 GB), so long sequences of huge frames can read further ahead.
     m_budgetBytes = qint64(sizeof(void *) == 8 ? 1536 : 384) * 1024 * 1024;
+#ifdef Q_OS_WIN
+    if (sizeof(void *) == 8) {
+        MEMORYSTATUSEX memory;
+        memory.dwLength = sizeof(memory);
+        if (GlobalMemoryStatusEx(&memory)) {
+            const qint64 eighth = qint64(memory.ullTotalPhys / 8);
+            m_budgetBytes = qBound(m_budgetBytes, eighth, qint64(8) * 1024 * 1024 * 1024);
+        }
+    }
+#endif
     m_gifTimer.setSingleShot(true);
     m_gifTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_gifTimer, &QTimer::timeout, this, &FrameLoader::showGifFrame);
@@ -193,6 +208,7 @@ void FrameLoader::clear()
     m_pending.clear();
     m_cache.clear();
     m_lru.clear();
+    m_keep.clear();
     m_cacheBytes = 0;
     m_wanted.clear();
 }
@@ -221,8 +237,16 @@ void FrameLoader::request(const QString &path)
 
 void FrameLoader::prefetch(const QStringList &paths)
 {
-    qint64 plannedBytes = m_cacheBytes;
+    m_keep = QSet<QString>(paths.begin(), paths.end());
+    // Only frames in the window (and the wanted one) count against the read-ahead limit: the
+    // others, like frames already shown, are dropped to make room when a new one arrives.
     const qint64 typical = m_cache.isEmpty() ? 0 : m_cacheBytes / m_cache.size();
+    qint64 plannedBytes = typical * m_pending.size();
+    for (auto it = m_cache.constBegin(); it != m_cache.constEnd(); ++it) {
+        if (it.key() == m_wanted || m_keep.contains(it.key())) {
+            plannedBytes += frameBytes(it.value());
+        }
+    }
     for (const QString &path : paths) {
         if (m_pending.size() >= MaxPrefetchJobs) {
             break;
@@ -294,7 +318,26 @@ void FrameLoader::store(const Frame &frame)
     m_cacheBytes += frameBytes(frame);
     // Drop the least recently used frames, but never the wanted one.
     while (m_cacheBytes > m_budgetBytes && m_lru.size() > 1) {
-        const QString oldest = m_lru.first() == m_wanted ? m_lru.value(1) : m_lru.first();
+        // Frames outside the read-ahead window go first (least recently used first), then any
+        // other, but never the wanted frame or the one just stored.
+        QString oldest;
+        for (const QString &candidate : std::as_const(m_lru)) {
+            if (candidate != m_wanted && candidate != frame.path && !m_keep.contains(candidate)) {
+                oldest = candidate;
+                break;
+            }
+        }
+        if (oldest.isEmpty()) {
+            for (const QString &candidate : std::as_const(m_lru)) {
+                if (candidate != m_wanted && candidate != frame.path) {
+                    oldest = candidate;
+                    break;
+                }
+            }
+        }
+        if (oldest.isEmpty()) {
+            break;
+        }
         m_lru.removeOne(oldest);
         m_cacheBytes -= frameBytes(m_cache.value(oldest));
         m_cache.remove(oldest);
