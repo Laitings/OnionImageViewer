@@ -97,6 +97,7 @@ qt_add_executable(OnionImageViewer
     src/SingleInstance.cpp
     src/PreferencesDialog.h
     src/PreferencesDialog.cpp
+    src/TextUtil.h
     src/Theme.h
     src/Theme.cpp
     src/ThumbnailCache.h
