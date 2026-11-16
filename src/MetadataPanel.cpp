@@ -34,9 +34,15 @@ MetadataPanel::MetadataPanel(QWidget *parent)
     m_filterEdit->setPlaceholderText(QStringLiteral("Filter (e.g. camera, lens, timecode)"));
     m_filterEdit->setClearButtonEnabled(true);
 
+    // Click copies tab-separated text (pastes into a spreadsheet); the arrow offers other layouts.
     auto *copyButton = new QToolButton(this);
     copyButton->setText(QStringLiteral("Copy All"));
-    copyButton->setToolTip(QStringLiteral("Copy the shown metadata as tab-separated text (pastes into a spreadsheet)"));
+    copyButton->setToolTip(QStringLiteral("Copy the shown metadata as tab-separated text (pastes into a spreadsheet). "
+                                          "The arrow has aligned columns, Markdown and CSV."));
+    copyButton->setPopupMode(QToolButton::MenuButtonPopup);
+    auto *copyMenu = new QMenu(copyButton);
+    addCopyAsActions(copyMenu);
+    copyButton->setMenu(copyMenu);
 
     m_tree->setColumnCount(2);
     m_tree->setHeaderLabels({QStringLiteral("Name"), QStringLiteral("Value")});
@@ -71,16 +77,7 @@ MetadataPanel::MetadataPanel(QWidget *parent)
         m_collapsedGroups.remove(item->text(0));
     });
     connect(copyButton, &QToolButton::clicked, this, [this]() {
-        // Only what the filter shows.
-        QList<Metadata::Entry> shown;
-        const QString filter = m_filterEdit->text().trimmed();
-        for (const Metadata::Entry &entry : std::as_const(m_entries)) {
-            if (filter.isEmpty() || entry.key.contains(filter, Qt::CaseInsensitive)
-                || entry.value.contains(filter, Qt::CaseInsensitive) || entry.group.contains(filter, Qt::CaseInsensitive)) {
-                shown.append(entry);
-            }
-        }
-        copyText(Metadata::toText(shown));
+        copyText(Metadata::toText(shownEntries())); // only what the filter shows
     });
 
     showMessage(QStringLiteral("Select an image to see its metadata."));
@@ -181,10 +178,37 @@ void MetadataPanel::showContextMenu(const QPoint &pos)
     menu.addAction(QStringLiteral("Copy All"), this, [this]() {
         copyText(Metadata::toText(m_entries));
     });
+    addCopyAsActions(&menu);
     menu.addSeparator();
     menu.addAction(QStringLiteral("Expand All"), m_tree, &QTreeWidget::expandAll);
     menu.addAction(QStringLiteral("Collapse All"), m_tree, &QTreeWidget::collapseAll);
     menu.exec(m_tree->viewport()->mapToGlobal(pos));
+}
+
+QList<Metadata::Entry> MetadataPanel::shownEntries() const
+{
+    QList<Metadata::Entry> shown;
+    const QString filter = m_filterEdit->text().trimmed();
+    for (const Metadata::Entry &entry : std::as_const(m_entries)) {
+        if (filter.isEmpty() || entry.key.contains(filter, Qt::CaseInsensitive)
+            || entry.value.contains(filter, Qt::CaseInsensitive) || entry.group.contains(filter, Qt::CaseInsensitive)) {
+            shown.append(entry);
+        }
+    }
+    return shown;
+}
+
+void MetadataPanel::addCopyAsActions(QMenu *menu)
+{
+    menu->addAction(QStringLiteral("Copy as Table (aligned columns)"), this, [this]() {
+        copyText(Metadata::toAlignedText(shownEntries()));
+    });
+    menu->addAction(QStringLiteral("Copy as Markdown Table"), this, [this]() {
+        copyText(Metadata::toMarkdown(shownEntries()));
+    });
+    menu->addAction(QStringLiteral("Copy as CSV"), this, [this]() {
+        copyText(Metadata::toCsv(shownEntries()));
+    });
 }
 
 void MetadataPanel::copyText(const QString &text)

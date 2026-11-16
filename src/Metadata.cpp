@@ -711,4 +711,71 @@ QString toText(const QList<Entry> &entries)
     return lines.join(QLatin1Char('\n'));
 }
 
+QString toAlignedText(const QList<Entry> &entries)
+{
+    const QString groupHeader = QStringLiteral("Group");
+    const QString keyHeader = QStringLiteral("Name");
+    qsizetype groupWidth = groupHeader.size();
+    qsizetype keyWidth = keyHeader.size();
+    for (const Entry &entry : entries) {
+        groupWidth = qMax(groupWidth, entry.group.size());
+        keyWidth = qMax(keyWidth, entry.key.size());
+    }
+    const auto line = [&](const QString &group, const QString &key, const QString &value) {
+        QString text = QStringLiteral("%1  %2  %3").arg(group.leftJustified(groupWidth), key.leftJustified(keyWidth), value);
+        while (text.endsWith(QLatin1Char(' '))) {
+            text.chop(1); // no trailing spaces, but keep the indent of the empty group column
+        }
+        return text;
+    };
+    QStringList lines;
+    lines << line(groupHeader, keyHeader, QStringLiteral("Value"));
+    lines << QString(groupWidth, QLatin1Char('-')) + QStringLiteral("  ") + QString(keyWidth, QLatin1Char('-'))
+                 + QStringLiteral("  -----");
+    QString previousGroup;
+    for (const Entry &entry : entries) {
+        const bool newGroup = entry.group != previousGroup;
+        if (newGroup && !previousGroup.isEmpty()) {
+            lines << QString(); // a blank line between groups
+        }
+        lines << line(newGroup ? entry.group : QString(), entry.key, entry.value);
+        previousGroup = entry.group;
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+QString toMarkdown(const QList<Entry> &entries)
+{
+    const auto escape = [](QString text) {
+        text.replace(QLatin1Char('|'), QStringLiteral("\\|"));
+        text.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        return text;
+    };
+    QStringList lines;
+    lines << QStringLiteral("| Group | Name | Value |");
+    lines << QStringLiteral("| --- | --- | --- |");
+    for (const Entry &entry : entries) {
+        lines << QStringLiteral("| %1 | %2 | %3 |").arg(escape(entry.group), escape(entry.key), escape(entry.value));
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+QString toCsv(const QList<Entry> &entries)
+{
+    const auto field = [](const QString &text) {
+        if (!text.contains(QLatin1Char(',')) && !text.contains(QLatin1Char('"')) && !text.contains(QLatin1Char('\n'))) {
+            return text;
+        }
+        QString quoted = text;
+        quoted.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+        return QLatin1Char('"') + quoted + QLatin1Char('"');
+    };
+    QStringList lines;
+    lines << QStringLiteral("Group,Name,Value");
+    for (const Entry &entry : entries) {
+        lines << field(entry.group) + QLatin1Char(',') + field(entry.key) + QLatin1Char(',') + field(entry.value);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 } // namespace Metadata

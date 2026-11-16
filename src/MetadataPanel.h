@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QLabel;
+class QMenu;
 class QLineEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -27,6 +28,10 @@ private:
     void applyFilter();
     void showContextMenu(const QPoint &pos);
     void copyText(const QString &text);
+    // The entries the filter box lets through (all of them when it is empty).
+    QList<Metadata::Entry> shownEntries() const;
+    // Adds "Copy as" entries (tab-separated, aligned columns, Markdown, CSV) for the shown entries.
+    void addCopyAsActions(QMenu *menu);
 
     QLabel *m_titleLabel = nullptr;
     QLineEdit *m_filterEdit = nullptr;
