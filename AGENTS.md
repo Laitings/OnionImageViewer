@@ -83,6 +83,10 @@ running the app on real files.
   sets for the chosen theme, and can change at run time. Never hard-code a dark or light colour in
   widget code; use `palette()` roles (icons already paint from `ButtonText`, and the image canvas
   from `Base`, pure black in light themes). New settings go on a page of `PreferencesDialog`.
+- One window or several: every window listens on a local socket (`SingleInstance::serverName()`,
+  started by `MainWindow::startInstanceServer()`). With Preferences > Startup set to "the window
+  that is already open", `main()` sends the path there (`forwardToRunning`) and exits before
+  creating a `MainWindow`; the default is a new window.
 - Preferences: every key is a constant in `src/Preferences.h`. `PreferencesDialog` reads them when it
   opens and writes them on OK (only the theme is tried live); `MainWindow::applyPreferences()` puts
   them to work at startup and after OK, and `openStartupFolder()` handles Startup. Code that lists

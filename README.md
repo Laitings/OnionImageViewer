@@ -6,7 +6,7 @@ the full file metadata, and export what you see with the view burned in.
 
 ## Features
 
-- **Preferences** (File > Preferences, Ctrl+,): pages for Appearance, Viewer (alpha background, zoom when an image opens, what the mouse wheel does), Grid (view, thumbnail size, hidden files), Startup (open nothing, the last folder, a pinned folder or Pictures), Files (what to do when a paste or move hits an existing name), Formats (Ghostscript program with a Test button), Performance (thumbnail cache limit and Clear cache) and Updates (check on startup). Not offered, because the app has nothing for them yet: a default sort order (names are always sorted A to Z), a delete setting (the app has no Delete command), and EXR/DPX exposure and gamma.
+- **Preferences** (File > Preferences, Ctrl+,): pages for Appearance, Viewer (alpha background, zoom when an image opens, what the mouse wheel does), Grid (view, thumbnail size, hidden files), Startup (open nothing, the last folder, a pinned folder or Pictures, and whether an image opened from Explorer goes to a new window or the one already open), Files (what to do when a paste or move hits an existing name), Formats (Ghostscript program with a Test button), Performance (thumbnail cache limit and Clear cache) and Updates (check on startup). Not offered, because the app has nothing for them yet: a default sort order (names are always sorted A to Z), a delete setting (the app has no Delete command), and EXR/DPX exposure and gamma.
 - **Themes**: the Appearance page with Windows setting (follows Windows light or dark mode, also while the app runs), Light, Dark, Dark blue, Dark green, Dark red, Dark purple and Jamaican man (black, green and gold) and Rainbow (a rainbow band across the menu bar and toolbar). A theme is tried out as it is picked.
 - **Formats**
   - Everything Qt reads: PNG, JPEG, BMP, GIF (including animation), and with the Qt Image Formats add-on TIFF, TGA and more.
@@ -135,6 +135,7 @@ src/
   PathBar.*               breadcrumb path bar (Alt+D / F4 to type a path)
   Theme.*                 colour themes and the Windows light/dark follow (setting `appearance/theme`)
   PreferencesDialog.*     Preferences window: a section list plus one page per group of settings
+  SingleInstance.*        hands a file from a second launch to the window already open (Preferences > Startup)
   Preferences.h           the QSettings keys of the Preferences pages (and the hidden-files filter)
   ThumbnailCache.*        the thumbnail cache folder: size, clear and prune to a limit
   FileItemDelegate.*      drawing of the Details and Tiles views

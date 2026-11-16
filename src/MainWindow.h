@@ -22,6 +22,7 @@ class QAction;
 class QCheckBox;
 class QDialog;
 class UpdateChecker;
+class QLocalServer;
 class QActionGroup;
 class FolderTreePanel;
 class ImageLoader;
@@ -83,6 +84,9 @@ private:
     void applyPreferences();
     // Opens the folder chosen under Preferences > Startup, if any.
     void openStartupFolder();
+    // Listens for files other launches of the app want opened here (see SingleInstance.h).
+    void startInstanceServer();
+    void bringToFront();
     void loadSettings();
     void saveSettings();
     void openImage();
@@ -235,6 +239,7 @@ private:
     QActionGroup *m_channelGroup = nullptr;
     QAction *m_clippingAction = nullptr;
     QActionGroup *m_alphaBackgroundGroup = nullptr;
+    QLocalServer *m_instanceServer = nullptr;
     bool m_hiddenShown = false; // the "show hidden files" setting the grids were last filled with
     QAction *m_alphaButtonAction = nullptr; // toolbar entry; only visible for images with alpha
     QAction *m_fullScreenAction = nullptr;
