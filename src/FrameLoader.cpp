@@ -213,6 +213,15 @@ void FrameLoader::clear()
     m_wanted.clear();
 }
 
+void FrameLoader::invalidate()
+{
+    const QString wanted = m_wanted;
+    clear();
+    if (!wanted.isEmpty()) {
+        request(wanted);
+    }
+}
+
 bool FrameLoader::isCached(const QString &path) const
 {
     return m_cache.contains(path);

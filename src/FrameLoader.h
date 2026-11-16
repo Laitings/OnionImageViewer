@@ -50,6 +50,9 @@ public:
     void prefetch(const QStringList &paths);
     bool isCached(const QString &path) const;
     void clear();
+    // Drops cached renders like clear(), but keeps the frame that is wanted: it is asked for again,
+    // so an image requested a moment ago (e.g. opened from Explorer) still arrives.
+    void invalidate();
 
     // True for file types that can hold an animation (GIF, WebP); startGif checks the file itself.
     static bool mayBeAnimated(const QString &path);

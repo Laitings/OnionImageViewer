@@ -3899,7 +3899,7 @@ void MainWindow::loadLutsInBackground(const QString &customLutFile)
             updateLutActions();
             updateViewTransformActions();
             // Anything rendered before the LUTs were ready used the fallback look.
-            m_frameLoader->clear();
+            m_frameLoader->invalidate();
             refreshCurrentDisplay();
         }, Qt::QueuedConnection);
     });
