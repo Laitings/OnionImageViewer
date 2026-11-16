@@ -58,7 +58,6 @@ ImageViewport::ImageViewport(QWidget *parent)
             return;
         }
         rebuildScaledCache();
-        update();
     });
 }
 
@@ -479,7 +478,7 @@ void ImageViewport::drawMainImage(QPainter &painter, const QRectF &target, const
     painter.setRenderHint(QPainter::SmoothPixmapTransform, m_zoom < 8.0 && !interactive);
     painter.drawImage(visibleTarget, m_image, source);
 
-    if (m_zoom < 1.0 && !m_smoothRescaleTimer.isActive()) {
+    if (m_zoom < 1.0 && !m_smoothRescaleTimer.isActive() && m_scalesInFlight == 0) {
         m_smoothRescaleTimer.start();
     }
 }
@@ -674,8 +673,15 @@ void ImageViewport::drawCheckerboard(QPainter &painter, const QRectF &rect)
     painter.restore();
 }
 
+ImageViewport::~ImageViewport()
+{
+    ++m_scaleGeneration;
+    m_scalePool.waitForDone();
+}
+
 void ImageViewport::invalidateScaledCache()
 {
+    ++m_scaleGeneration;
     m_scaledCache = QPixmap();
     m_scaledCacheZoom = 0.0;
 }
@@ -691,6 +697,23 @@ void ImageViewport::rebuildScaledCache()
         qMax(1, qRound(static_cast<double>(m_image.width()) * m_zoom)),
         qMax(1, qRound(static_cast<double>(m_image.height()) * m_zoom)));
 
-    m_scaledCache = QPixmap::fromImage(m_image.scaled(scaledSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
-    m_scaledCacheZoom = m_zoom;
+    // Smooth scaling a 4K+ frame takes long enough to freeze the window, so a worker does it and
+    // the result is used (and the view repainted) only if the image and zoom are still the same.
+    const int generation = ++m_scaleGeneration;
+    ++m_scalesInFlight;
+    const QImage image = m_image;
+    const double zoom = m_zoom;
+    m_scalePool.setMaxThreadCount(1);
+    m_scalePool.start([this, generation, image, zoom, scaledSize]() {
+        QImage scaled = image.scaled(scaledSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        QMetaObject::invokeMethod(this, [this, generation, zoom, scaled]() {
+            --m_scalesInFlight;
+            if (generation != m_scaleGeneration) {
+                return;
+            }
+            m_scaledCache = QPixmap::fromImage(scaled);
+            m_scaledCacheZoom = zoom;
+            update();
+        }, Qt::QueuedConnection);
+    });
 }

@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QPoint>
 #include <QPixmap>
+#include <QThreadPool>
 #include <QPointF>
 #include <QTimer>
 #include <QWidget>
@@ -17,6 +18,7 @@ public:
     enum class Channel { Rgb, Red, Green, Blue, Alpha, Luma };
 
     explicit ImageViewport(QWidget *parent = nullptr);
+    ~ImageViewport() override;
 
     // Display aids that only change how the picture is drawn (the pixel readout is unaffected).
     void setChannel(Channel channel);
@@ -106,6 +108,9 @@ private:
     QPixmap m_scaledCache;
     double m_scaledCacheZoom = 0.0;
     QTimer m_smoothRescaleTimer;
+    QThreadPool m_scalePool;   // builds the smooth downscaled copy off the UI thread
+    int m_scalesInFlight = 0;  // queued or running downscales (no new one is scheduled meanwhile)
+    int m_scaleGeneration = 0; // a finished copy is used only if nothing changed meanwhile
     QElapsedTimer m_imageChanged; // when setImage() last ran
 
     QImage m_original; // as given to setImage, converted for painting
