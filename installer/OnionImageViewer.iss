@@ -215,3 +215,19 @@ begin
     end;
   end;
 end;
+
+// Lists the Ghostscript download on the "Ready to Install" page, next to the tasks.
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo,
+  MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := '';
+  if MemoDirInfo <> '' then
+    Result := Result + MemoDirInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then
+    Result := Result + MemoGroupInfo + NewLine + NewLine;
+  if MemoTasksInfo <> '' then
+    Result := Result + MemoTasksInfo + NewLine + NewLine;
+  if GsCheck.Checked and GhostscriptMissing then
+    Result := Result + 'Ghostscript (for EPS files):' + NewLine
+      + Space + 'Download (about 65 MB) and install Ghostscript' + NewLine;
+end;
