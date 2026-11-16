@@ -178,6 +178,10 @@ private:
     // Background behind transparent pixels (checkerboard, black, grey or white) in both panes.
     void setAlphaBackground(int background);
     void updateAlphaButton();
+    // Hovering an entry of the alpha background menu shows it right away; closing the menu
+    // without picking one goes back to the chosen background.
+    void previewAlphaBackground(int background);
+    void hookAlphaMenu(QMenu *menu);
     void setFullScreenMode(bool on);
     void copyImageToClipboard();
     void exportImageAs();

@@ -971,6 +971,9 @@ void MainWindow::createActions()
         connect(action, &QAction::triggered, this, [this, background = int(entry.background)]() {
             setAlphaBackground(background);
         });
+        connect(action, &QAction::hovered, this, [this, background = int(entry.background)]() {
+            previewAlphaBackground(background);
+        });
     }
 
     // Split viewer: a second pane with its own file grid, to put any two images side by side.
@@ -1201,6 +1204,7 @@ void MainWindow::createMenus()
     channelMenu->addActions(m_channelGroup->actions());
     QMenu *alphaMenu = viewMenu->addMenu(QStringLiteral("Alpha Background"));
     alphaMenu->addActions(m_alphaBackgroundGroup->actions());
+    hookAlphaMenu(alphaMenu);
     viewMenu->addAction(m_clippingAction);
     viewMenu->addAction(m_fullScreenAction);
     viewMenu->addAction(m_metadataAction);
@@ -1398,6 +1402,7 @@ void MainWindow::createToolbar()
     // Background behind transparent pixels; only shown while the viewed image has alpha.
     auto *alphaMenu = new QMenu(toolbar);
     alphaMenu->addActions(m_alphaBackgroundGroup->actions());
+    hookAlphaMenu(alphaMenu);
     auto *alphaButton = new QToolButton(toolbar);
     alphaButton->setMenu(alphaMenu);
     alphaButton->setPopupMode(QToolButton::InstantPopup);
@@ -2674,6 +2679,26 @@ void MainWindow::setAlphaBackground(int background)
         action->setChecked(action->data().toInt() == int(wanted));
     }
     QSettings().setValue(SettingsAlphaBackground, int(wanted));
+}
+
+void MainWindow::previewAlphaBackground(int background)
+{
+    const auto wanted = static_cast<ImageViewport::AlphaBackground>(background);
+    m_imageViewport->setAlphaBackground(wanted);
+    m_splitPane->viewport()->setAlphaBackground(wanted);
+}
+
+void MainWindow::hookAlphaMenu(QMenu *menu)
+{
+    connect(menu, &QMenu::aboutToHide, this, [this]() {
+        // Runs after a pick has been applied too, so the checked entry is always the one to show.
+        for (QAction *action : m_alphaBackgroundGroup->actions()) {
+            if (action->isChecked()) {
+                previewAlphaBackground(action->data().toInt());
+                break;
+            }
+        }
+    });
 }
 
 void MainWindow::updateAlphaButton()
