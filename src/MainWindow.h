@@ -98,6 +98,8 @@ private:
     void chooseLutFile();
     void chooseArriLutFolder();
     void findArriLuts();
+    // Finds the ARRI LUTs and loads the saved custom LUT on a worker thread, then refreshes the views.
+    void loadLutsInBackground(const QString &customLutFile);
     // Shows About or opens the standalone update check, with shared result handling.
     void showUpdateDialog(bool about);
     void updateColorButton(ColorTransform::View view);
@@ -248,6 +250,7 @@ private:
     QAction *m_exportAction = nullptr;
     QAction *m_batchConvertAction = nullptr;
     QThreadPool m_batchPool;
+    QThreadPool m_lutPool; // startup LUT search and load
     std::atomic<bool> m_batchCanceled{false};
     bool m_batchRunning = false;
     QAction *m_batchRenameAction = nullptr;

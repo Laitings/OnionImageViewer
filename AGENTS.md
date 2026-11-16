@@ -65,6 +65,8 @@ running the app on real files.
 - Keep the UI thread free of slow work. Disk reads, decoding and thumbnails run on background
   threads (`FrameLoader`, `QThreadPool`). The user works with network shares (SMB), mapped
   drives and OneDrive "online-only" files:
+  - the ARRI LUT search and the saved custom LUT load in the background at startup
+    (`MainWindow::loadLutsInBackground`); `ImageViewport` builds its smooth downscaled copy on a worker;
   - never read a file's contents just to show a thumbnail in a folder listing (it downloads
     OneDrive files); use the Windows shell thumbnail cache;
   - avoid calls that touch every drive root on the UI thread;

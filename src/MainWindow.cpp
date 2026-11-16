@@ -690,6 +690,7 @@ MainWindow::~MainWindow()
 {
     m_batchCanceled = true;
     m_batchPool.waitForDone();
+    m_lutPool.waitForDone();
     m_thumbnailPool.clear();
     m_thumbnailPool.waitForDone();
     m_metadataPool.clear();
@@ -1935,16 +1936,13 @@ void MainWindow::loadSettings()
     }
     setGridView(gridView, settings.value(SettingsThumbnailSize, 128).toInt());
 
-    findArriLuts();
+    // Searching the ARRI LUT folders and parsing .cube files can be slow (mapped drives, big 3D
+    // LUTs), so it runs in the background and the views are refreshed when it is done.
     const QString lutFile = settings.value(SettingsLutFile).toString();
-    if (!lutFile.isEmpty()) {
-        QString error;
-        if (!ColorTransform::loadLut(lutFile, &error)) {
-            statusBar()->showMessage(QStringLiteral("Could not load LUT %1: %2").arg(lutFile, error), 8000);
-        }
-    }
+    loadLutsInBackground(lutFile);
     m_view = ColorTransform::fromSettingsKey(settings.value(SettingsViewTransform).toString());
-    if (m_view == ColorTransform::View::CustomLut && !ColorTransform::hasLut()) {
+    // A saved custom LUT view stays selected while the file loads; it falls back to None if it fails.
+    if (m_view == ColorTransform::View::CustomLut && lutFile.isEmpty()) {
         m_view = ColorTransform::View::None;
     }
     m_input = ColorTransform::inputFromSettingsKey(settings.value(SettingsInput).toString());
@@ -3879,6 +3877,32 @@ void MainWindow::findArriLuts()
         QSettings().value(SettingsArriLutFolder).toString(),
     };
     ColorTransform::findArriLuts(folders);
+}
+
+void MainWindow::loadLutsInBackground(const QString &customLutFile)
+{
+    const QStringList folders = {
+        QCoreApplication::applicationDirPath() + QStringLiteral("/luts"),
+        QSettings().value(SettingsArriLutFolder).toString(),
+    };
+    m_lutPool.start([this, folders, customLutFile]() {
+        ColorTransform::findArriLuts(folders);
+        QString error;
+        const bool customOk = customLutFile.isEmpty() || ColorTransform::loadLut(customLutFile, &error);
+        QMetaObject::invokeMethod(this, [this, customLutFile, customOk, error]() {
+            if (!customOk) {
+                statusBar()->showMessage(QStringLiteral("Could not load LUT %1: %2").arg(customLutFile, error), 8000);
+                if (m_view == ColorTransform::View::CustomLut) {
+                    m_view = ColorTransform::View::None;
+                }
+            }
+            updateLutActions();
+            updateViewTransformActions();
+            // Anything rendered before the LUTs were ready used the fallback look.
+            m_frameLoader->clear();
+            refreshCurrentDisplay();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::chooseArriLutFolder()
