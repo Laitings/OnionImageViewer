@@ -29,6 +29,9 @@ ImageViewport::ImageViewport(QWidget *parent)
 {
     setBackgroundRole(QPalette::Base);
     setMouseTracking(true); // for the pixel readout and the wipe divider cursor
+    // A click on the image takes keyboard focus, so a text field elsewhere (the metadata filter,
+    // a search box) lets go and the arrow keys step through images again.
+    setFocusPolicy(Qt::ClickFocus);
     setCursor(Qt::ArrowCursor);
     setAttribute(Qt::WA_OpaquePaintEvent);
 
