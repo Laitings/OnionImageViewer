@@ -175,6 +175,9 @@ private:
 
     // Extras: channels, clipping, full screen, clipboard and Explorer.
     void setChannel(int channel, bool toggle);
+    // Background behind transparent pixels (checkerboard, black, grey or white) in both panes.
+    void setAlphaBackground(int background);
+    void updateAlphaButton();
     void setFullScreenMode(bool on);
     void copyImageToClipboard();
     void exportImageAs();
@@ -220,6 +223,8 @@ private:
     QActionGroup *m_compareGroup = nullptr;
     QActionGroup *m_channelGroup = nullptr;
     QAction *m_clippingAction = nullptr;
+    QActionGroup *m_alphaBackgroundGroup = nullptr;
+    QAction *m_alphaButtonAction = nullptr; // toolbar entry; only visible for images with alpha
     QAction *m_fullScreenAction = nullptr;
     QAction *m_copyImageAction = nullptr;
     QAction *m_exportAction = nullptr;

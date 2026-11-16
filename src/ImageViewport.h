@@ -25,8 +25,16 @@ public:
     void setClippingShown(bool shown);
     bool isClippingShown() const { return m_showClipping; }
 
+    // What shows through transparent pixels: the grey checkerboard (the default), or a flat
+    // black, grey or white.
+    enum class AlphaBackground { Checker, Black, Grey, White };
+    void setAlphaBackground(AlphaBackground background);
+    AlphaBackground alphaBackground() const { return m_alphaBackground; }
+
     void setImage(const QImage &image, bool keepView = false);
     bool hasImage() const;
+    // True when the shown image has an alpha channel.
+    bool hasAlpha() const { return m_original.hasAlphaChannel(); }
 
     // A/B wipe: the compare image (any size; it is stretched over the main image) is shown left of
     // a draggable divider, the main image right of it. Labels are drawn in the top corners.
@@ -51,6 +59,8 @@ signals:
     void hoveredPixelChanged(const QPoint &pixel);
     // The user zoomed (wheel) or panned (drag). Not emitted for changes made in code.
     void viewChangedByUser();
+    // The shown image gained or lost an alpha channel (for showing the alpha background control).
+    void alphaPresenceChanged(bool hasAlpha);
 
 public slots:
     void fitToWindow();
@@ -90,6 +100,7 @@ private:
     QImage m_image;    // m_original with the channel/clipping look applied
     Channel m_channel = Channel::Rgb;
     bool m_showClipping = false;
+    AlphaBackground m_alphaBackground = AlphaBackground::Checker;
     double m_zoom = 1.0;
     QPointF m_pan;
     bool m_fitMode = true;

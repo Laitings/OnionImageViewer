@@ -57,6 +57,7 @@ void ImageViewport::setImage(const QImage &image, bool keepView)
 {
     // Same picture shown differently (e.g. a new color view): keep zoom and position.
     const bool sameSize = !m_image.isNull() && image.size() == m_image.size();
+    const bool hadAlpha = hasAlpha();
     // Convert once to a format QPainter can blit directly, so painting never has to
     // convert pixel formats on the fly.
     if (image.isNull()) {
@@ -68,6 +69,9 @@ void ImageViewport::setImage(const QImage &image, bool keepView)
     }
     m_image = applyLook(m_original);
     invalidateScaledCache();
+    if (hasAlpha() != hadAlpha) {
+        emit alphaPresenceChanged(hasAlpha());
+    }
 
     if (keepView && sameSize) {
         update();
@@ -107,6 +111,14 @@ void ImageViewport::setChannel(Channel channel)
     if (m_channel != channel) {
         m_channel = channel;
         reapplyLook();
+    }
+}
+
+void ImageViewport::setAlphaBackground(AlphaBackground background)
+{
+    if (m_alphaBackground != background) {
+        m_alphaBackground = background;
+        update();
     }
 }
 
@@ -613,6 +625,20 @@ void ImageViewport::drawCheckerboard(QPainter &painter, const QRectF &rect)
 {
     if (rect.isEmpty()) {
         return;
+    }
+
+    switch (m_alphaBackground) {
+    case AlphaBackground::Black:
+        painter.fillRect(rect, Qt::black);
+        return;
+    case AlphaBackground::Grey:
+        painter.fillRect(rect, QColor(128, 128, 128));
+        return;
+    case AlphaBackground::White:
+        painter.fillRect(rect, Qt::white);
+        return;
+    case AlphaBackground::Checker:
+        break;
     }
 
     painter.save();
