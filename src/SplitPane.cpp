@@ -7,6 +7,7 @@
 #include "NameFilter.h"
 #include "OverlayButton.h"
 #include "PathBar.h"
+#include "Preferences.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -118,6 +119,11 @@ SplitPane::SplitPane(std::shared_ptr<const ImageLoader> loader, ThumbnailFunctio
     m_previousImageButton->setToolTip(QStringLiteral("Previous image (Left)"));
     m_nextImageButton->setToolTip(QStringLiteral("Next image (Right)"));
     m_viewport->installEventFilter(this);
+    connect(m_viewport, &ImageViewport::stepRequested, this, [this](int delta) {
+        if (m_index >= 0) {
+            showImage(qBound(0, m_index + delta, int(m_imagePaths.size()) - 1), false);
+        }
+    });
     connect(m_closeImageButton, &OverlayButton::clicked, this, [this]() {
         showBrowser();
         focusContent();
@@ -205,14 +211,14 @@ void SplitPane::browse(const QString &folderPath, const QString &selectPath)
         resetThumbnails();
 
         // Only names and attributes; file contents are never read for the listing.
-        const QFileInfoList folders = folder.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase);
+        const QFileInfoList folders = folder.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | Preferences::hiddenFilter(), QDir::Name | QDir::IgnoreCase);
         for (const QFileInfo &info : folders) {
             auto *item = new QListWidgetItem(m_folderIcon, info.fileName(), m_grid);
             item->setData(PathRole, info.absoluteFilePath());
             item->setData(IsFolderRole, true);
             item->setToolTip(QDir::toNativeSeparators(info.absoluteFilePath()));
         }
-        const QFileInfoList files = folder.entryInfoList(QDir::Files, QDir::Name | QDir::IgnoreCase);
+        const QFileInfoList files = folder.entryInfoList(QDir::Files | Preferences::hiddenFilter(), QDir::Name | QDir::IgnoreCase);
         for (const QFileInfo &info : files) {
             const QString path = info.absoluteFilePath();
             if (!m_isImage(path)) {

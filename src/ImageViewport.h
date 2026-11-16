@@ -31,6 +31,14 @@ public:
     void setAlphaBackground(AlphaBackground background);
     AlphaBackground alphaBackground() const { return m_alphaBackground; }
 
+    // How a newly opened image is zoomed: Auto shows it at 100% when it fits the window and fits
+    // it to the window otherwise; Fit always fits it; Actual always shows it at 100%.
+    enum class OpenZoom { Auto, Fit, Actual };
+    void setOpenZoom(OpenZoom openZoom) { m_openZoom = openZoom; }
+    // What the mouse wheel does: zoom (the default), or step to the next/previous image
+    // (stepRequested), and then Ctrl + wheel zooms.
+    void setWheelStepsImages(bool steps) { m_wheelSteps = steps; }
+
     void setImage(const QImage &image, bool keepView = false);
     bool hasImage() const;
     // True when the shown image has an alpha channel.
@@ -59,6 +67,8 @@ signals:
     void hoveredPixelChanged(const QPoint &pixel);
     // The user zoomed (wheel) or panned (drag). Not emitted for changes made in code.
     void viewChangedByUser();
+    // The wheel asked for the next (+1) or previous (-1) image (see setWheelStepsImages).
+    void stepRequested(int delta);
     // The shown image gained or lost an alpha channel (for showing the alpha background control).
     void alphaPresenceChanged(bool hasAlpha);
 
@@ -101,6 +111,9 @@ private:
     Channel m_channel = Channel::Rgb;
     bool m_showClipping = false;
     AlphaBackground m_alphaBackground = AlphaBackground::Checker;
+    OpenZoom m_openZoom = OpenZoom::Auto;
+    bool m_wheelSteps = false;
+    int m_wheelRemainder = 0;
     double m_zoom = 1.0;
     QPointF m_pan;
     bool m_fitMode = true;

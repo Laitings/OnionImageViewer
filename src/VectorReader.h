@@ -28,5 +28,8 @@ QList<QPair<QString, QString>> describe(const QString &filePath);
 
 bool hasQtPdf();
 QString ghostscriptPath(); // empty if not found
+// A Ghostscript the user chose in Preferences; used instead of searching when the file exists.
+// Empty goes back to searching (the PATH and the default install folders).
+void setGhostscriptOverride(const QString &path);
 
 } // namespace Vector
