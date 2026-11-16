@@ -58,9 +58,6 @@ VersionInfoDescription={#AppName} Setup
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "openwith"; Description: "Add {#AppName} to ""Open with"" for EXR, DPX, TIFF and other images"; GroupDescription: "Explorer:"
-; Ghostscript draws EPS files. It is a separate, free program, so it is offered rather than bundled,
-; and only when it isn't installed yet. See the [Code] section.
-Name: "installgs"; Description: "Download and install Ghostscript (about 65 MB, needs administrator approval). Onion Image Viewer uses it to draw EPS files; without it an EPS shows only its embedded preview, if it has one"; GroupDescription: "Optional extra:"; Flags: unchecked; Check: GhostscriptMissing
 
 [InstallDelete]
 ; Clear out files from an older version (Qt plugins and LUTs can change between versions).
@@ -112,6 +109,8 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 
 [Code]
 var
+  GsPage: TWizardPage;
+  GsCheck: TNewCheckBox;
   GsDownloadPage: TDownloadWizardPage;
   GsDownloaded: Boolean;
 
@@ -158,10 +157,37 @@ begin
   Result := GsDownloaded;
 end;
 
+// Ghostscript draws EPS files. It is a separate, free program, so it is offered on a page of its own
+// (only when it isn't installed yet) instead of being bundled.
 procedure InitializeWizard;
+var
+  Info: TNewStaticText;
 begin
+  GsPage := CreateCustomPage(wpSelectTasks, 'Optional: Ghostscript', 'Needed only to view EPS files');
+  Info := TNewStaticText.Create(GsPage);
+  Info.Parent := GsPage.Surface;
+  Info.WordWrap := True;
+  Info.AutoSize := True;
+  Info.Width := GsPage.SurfaceWidth;
+  Info.Caption :=
+    'EPS (Encapsulated PostScript) is an older vector graphics format used for logos and illustrations '
+    + 'from design programs such as Adobe Illustrator.' + #13#10#13#10
+    + 'Onion Image Viewer needs a free program called Ghostscript to draw EPS files, and it is not '
+    + 'installed on this PC. Without it, an EPS file only shows its embedded preview, if it has one.'
+    + #13#10#13#10
+    + 'Ghostscript is about 65 MB, and installing it asks for administrator approval.';
+  GsCheck := TNewCheckBox.Create(GsPage);
+  GsCheck.Parent := GsPage.Surface;
+  GsCheck.Top := Info.Top + Info.Height + ScaleY(16);
+  GsCheck.Width := GsPage.SurfaceWidth;
+  GsCheck.Caption := 'Download and install Ghostscript';
   GsDownloadPage := CreateDownloadPage('Downloading Ghostscript',
     'Ghostscript lets Onion Image Viewer draw EPS files.', nil);
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = GsPage.ID) and not GhostscriptMissing;
 end;
 
 // Downloads the Ghostscript installer before the files are copied. A failed download only skips
@@ -169,7 +195,7 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = wpReady) and WizardIsTaskSelected('installgs') then
+  if (CurPageID = wpReady) and GsCheck.Checked and GhostscriptMissing then
   begin
     GsDownloadPage.Clear;
     GsDownloadPage.Add('{#GsUrl}', '{#GsFile}', '{#GsSha256}');
