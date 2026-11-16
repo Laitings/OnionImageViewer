@@ -133,6 +133,24 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version: $v"
 
+      # The installer offers to download Ghostscript (EPS files) and only runs it if its SHA-256
+      # matches the one pinned in the script. Fail here, before building, if the pinned URL or hash
+      # has gone stale, so a release never ships an offer that can't complete.
+      - name: Check the Ghostscript download pinned in the installer
+        shell: pwsh
+        run: |
+          $iss = Get-Content installer\OnionImageViewer.iss -Raw
+          foreach ($name in "GsUrl", "GsSha256") {
+            if ($iss -notmatch "(?m)^#define $name ""([^""]+)""") { throw "#define $name not found in OnionImageViewer.iss" }
+            Set-Variable $name $matches[1]
+          }
+          $file = Join-Path $env:RUNNER_TEMP "ghostscript-setup.exe"
+          Write-Host "Downloading $GsUrl"
+          Invoke-WebRequest $GsUrl -OutFile $file -UseBasicParsing
+          $actual = (Get-FileHash $file -Algorithm SHA256).Hash
+          if ($actual -ne $GsSha256) { throw "Ghostscript download hash is $actual, but the script pins $GsSha256" }
+          Write-Host "Ghostscript download matches the pinned SHA-256."
+
       - name: Build the app and the installer
         shell: pwsh
         run: >
