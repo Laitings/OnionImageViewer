@@ -1,4 +1,5 @@
 #include "WebpReader.h"
+#include "TextUtil.h"
 
 #include <QColorSpace>
 #include <QFile>
@@ -242,7 +243,7 @@ QList<QPair<QString, QString>> describe(const QString &filePath, QString *error)
     const QByteArray icc = chunk(data, "ICCP");
     if (!icc.isEmpty()) {
         const QColorSpace space = QColorSpace::fromIccProfile(icc);
-        const QString name = space.isValid() ? space.description() : QString();
+        const QString name = space.isValid() ? TextUtil::printable(space.description()) : QString();
         facts.append({QStringLiteral("Colour profile"), name.isEmpty() ? QStringLiteral("Embedded ICC profile") : name});
     }
 #else

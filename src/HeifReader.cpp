@@ -1,4 +1,5 @@
 #include "HeifReader.h"
+#include "TextUtil.h"
 
 #include <QFileInfo>
 
@@ -275,7 +276,7 @@ QString colorProfileText(const heif_image_handle *handle)
     if (iccSize > 0) {
         QByteArray icc(static_cast<qsizetype>(iccSize), Qt::Uninitialized);
         if (heif_image_handle_get_raw_color_profile(handle, icc.data()).code == heif_error_Ok) {
-            const QString description = QColorSpace::fromIccProfile(icc).description();
+            const QString description = TextUtil::printable(QColorSpace::fromIccProfile(icc).description());
             return description.isEmpty() ? QStringLiteral("ICC profile") : QStringLiteral("ICC: %1").arg(description);
         }
     }
