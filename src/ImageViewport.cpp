@@ -356,10 +356,11 @@ void ImageViewport::matchView(const ImageViewport &other)
 
 void ImageViewport::paintImage(QPainter &painter, QPaintEvent *event)
 {
-    painter.fillRect(event->rect(), QColor(31, 31, 31));
+    // The canvas follows the theme (the Base colour of the palette).
+    painter.fillRect(event->rect(), palette().color(QPalette::Base));
 
     if (m_image.isNull()) {
-        painter.setPen(QColor(150, 150, 150));
+        painter.setPen(palette().color(QPalette::PlaceholderText));
         painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("Open an image to view it"));
         return;
     }
