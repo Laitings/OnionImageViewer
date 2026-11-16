@@ -765,7 +765,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         revealOverlayButtons();
     }
 
-    if (event->type() == QEvent::KeyPress && isActiveWindow() && isViewerVisible()
+    // A floating Metadata or Scopes panel is a window of its own: keys pressed there still go to the viewer.
+    const QWidget *activeWindow = QApplication::activeWindow();
+    const bool viewerWindowActive = isActiveWindow()
+        || (activeWindow && (activeWindow == m_metadataDock || activeWindow == m_scopesDock));
+    if (event->type() == QEvent::KeyPress && viewerWindowActive && isViewerVisible()
         && !qobject_cast<QLineEdit *>(QApplication::focusWidget())) {
         if (handleViewerKey(static_cast<QKeyEvent *>(event))) {
             return true;
