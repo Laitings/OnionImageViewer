@@ -2,6 +2,7 @@
 
 #include "Exif.h"
 #include "HeifReader.h"
+#include "RawReader.h"
 
 #include <QDir>
 #include <QFile>
@@ -400,7 +401,15 @@ QDateTime readDateTaken(const QString &path)
     }
     QByteArray head = file.read(64 * 1024);
     if (head.startsWith("II*") || head.startsWith(QByteArray("MM\0*", 4))) {
-        return Exif::dateTaken(head);
+        const QDateTime taken = Exif::dateTaken(head);
+        if (taken.isValid() || !Raw::isRawFile(path)) {
+            return taken;
+        }
+    }
+    if (Raw::isRawFile(path)) {
+        // CR3, RAF, RW2 and ORF aren't plain TIFF, and some raws keep Exif past the first 64 KB.
+        file.close();
+        return Raw::dateTaken(path);
     }
     if (!head.startsWith("\xFF\xD8")) {
         return QDateTime();

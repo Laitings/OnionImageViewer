@@ -62,8 +62,8 @@ qt_add_executable(OnionImageViewer
     src/ExrReader.cpp
     src/HeifReader.h
     src/HeifReader.cpp
-    src/DngReader.h
-    src/DngReader.cpp
+    src/RawReader.h
+    src/RawReader.cpp
     src/Exif.h
     src/Exif.cpp
     src/BatchRename.h
@@ -212,11 +212,11 @@ endif()
 # LibRaw's reentrant library can decode on multiple viewer and thumbnail workers.
 find_package(libraw CONFIG QUIET)
 if(TARGET libraw::raw_r)
-    message(STATUS "LibRaw found: DNG support enabled")
+    message(STATUS "LibRaw found: camera raw support enabled (ARW, CR2/CR3, NEF, DNG, ...)")
     target_link_libraries(OnionImageViewer PRIVATE libraw::raw_r)
     target_compile_definitions(OnionImageViewer PRIVATE ONION_HAVE_LIBRAW)
 else()
-    message(STATUS "LibRaw not found: building without DNG support")
+    message(STATUS "LibRaw not found: building without camera raw support")
 endif()
 
 if(WIN32 AND VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
