@@ -73,8 +73,8 @@ QString key(const QString &folder, const QString &name);
 // Whether the pattern uses {date}, the only token that needs the files' headers read.
 bool usesDateTaken(const QString &pattern);
 
-// The Exif date taken from a JPEG, TIFF/DNG or HEIF file. Reads only the header (up to 64 KB, or
-// libheif for HEIF), sequentially. Slow on network shares: call it off the UI thread.
+// The Exif date taken from a JPEG, TIFF, HEIF or camera raw file. Reads only the header (up to
+// 64 KB, or libheif for HEIF and LibRaw for raws the first 64 KB doesn't answer), sequentially. Slow on network shares: call it off the UI thread.
 QDateTime readDateTaken(const QString &path);
 
 // Default for Options::keepFrameNumbers for this selection: on when it holds something that

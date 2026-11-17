@@ -2,7 +2,7 @@
 #include "BatchRenameDialog.h"
 
 #include "ColorTransform.h"
-#include "DngReader.h"
+#include "RawReader.h"
 #include "DpxReader.h"
 #include "ExrReader.h"
 #include "HeifReader.h"
@@ -361,8 +361,8 @@ QStringList supportedImageSuffixes()
     if (Exr::isAvailable()) {
         suffixes.append(QStringLiteral("exr"));
     }
-    if (Dng::isAvailable()) {
-        suffixes.append(QStringLiteral("dng"));
+    if (Raw::isAvailable()) {
+        suffixes.append(Raw::suffixes());
     }
     if (Webp::isAvailable()) {
         suffixes.append(QStringLiteral("webp"));
@@ -538,8 +538,8 @@ QImage displayThumbnail(const QImage &source, ColorTransform::View view, ColorTr
 
 QImage readerThumbnailForImage(const QString &filePath, ColorTransform::View view, ColorTransform::Input input, const QSize &size)
 {
-    if (Dng::isDngFile(filePath)) {
-        return displayThumbnail(Dng::readThumbnail(filePath, size), view, input, size);
+    if (Raw::isRawFile(filePath)) {
+        return displayThumbnail(Raw::readThumbnail(filePath, size), view, input, size);
     }
 
     if (Exr::isExrFile(filePath)) {
@@ -1972,8 +1972,18 @@ void MainWindow::saveSettings()
 
 void MainWindow::openImage()
 {
-    const QString filter = QStringLiteral("Images (*.ai *.bmp%1 *.dpx *.eps *.epsf *.epsi *.exr *.gif *.heic *.heif *.hif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm);;All Files (*.*)")
-                               .arg(Dng::isAvailable() ? QStringLiteral(" *.dng") : QString());
+    QString rawPatterns;
+    if (Raw::isAvailable()) {
+        for (const QString &suffix : Raw::suffixes()) {
+            rawPatterns += QStringLiteral(" *.") + suffix;
+        }
+    }
+    QString filter = QStringLiteral("Images (*.ai *.bmp *.dpx *.eps *.epsf *.epsi *.exr *.gif *.heic *.heif *.hif *.jpg *.jpeg *.png *.pbm *.pdf *.pgm *.ppm *.psb *.psd *.tga *.tif *.tiff *.webp *.xbm *.xpm%1);;")
+                         .arg(rawPatterns);
+    if (!rawPatterns.isEmpty()) {
+        filter += QStringLiteral("Camera raw (%1);;").arg(rawPatterns.trimmed());
+    }
+    filter += QStringLiteral("All Files (*.*)");
     const QString filePath = QFileDialog::getOpenFileName(
         this,
         QStringLiteral("Open Image"),

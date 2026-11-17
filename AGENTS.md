@@ -72,7 +72,9 @@ running the app on real files.
   - avoid calls that touch every drive root on the UI thread;
   - read files sequentially rather than with many scattered reads.
 - Readers generally keep the stored values and hand them to `ColorTransform::toDisplay()`.
-  The DNG reader develops sensor data to sRGB before handing it to the display pipeline.
+  The camera raw reader (`Raw::`, `src/RawReader.*`, LibRaw) develops sensor data to sRGB before
+  handing it to the display pipeline; its extensions are listed once in `Raw::suffixes()`, which
+  feeds the image extension list and the Open dialog (the installer's "Open with" list is separate).
   Add a new format by writing a reader with `isXxxFile()` and
   `read()` like `src/DpxReader.h`, then hook it in where the other readers are: loading in
   `src/ImageLoader.cpp`, thumbnails, the list of image extensions and the Open dialog filter in
